@@ -1,0 +1,8 @@
+node_modules/
+dist/
+build/
+data/*.sqlite*
+data/.master-key
+.env
+.DS_Store
+npm-debug.log*

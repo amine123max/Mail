@@ -1,0 +1,24 @@
+services:
+  mail:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      MAIL_SESSION_SECRET: ${MAIL_SESSION_SECRET:?必须设置 MAIL_SESSION_SECRET}
+      MAIL_ENCRYPTION_KEY: ${MAIL_ENCRYPTION_KEY:?必须设置 MAIL_ENCRYPTION_KEY}
+      MAIL_VERIFICATION_SMTP_HOST: ${MAIL_VERIFICATION_SMTP_HOST:?必须设置验证码 SMTP 主机}
+      MAIL_VERIFICATION_SMTP_PORT: ${MAIL_VERIFICATION_SMTP_PORT:-587}
+      MAIL_VERIFICATION_SMTP_SECURE: ${MAIL_VERIFICATION_SMTP_SECURE:-0}
+      MAIL_VERIFICATION_SMTP_USER: ${MAIL_VERIFICATION_SMTP_USER:?必须设置验证码 SMTP 用户}
+      MAIL_VERIFICATION_SMTP_PASSWORD: ${MAIL_VERIFICATION_SMTP_PASSWORD:?必须设置验证码 SMTP 密码}
+      MAIL_VERIFICATION_FROM: ${MAIL_VERIFICATION_FROM:?必须设置验证码发件地址}
+      MAIL_DATA_DIR: /app/data
+    volumes:
+      - mail-data:/app/data
+
+volumes:
+  mail-data:

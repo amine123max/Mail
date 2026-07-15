@@ -1,0 +1,42 @@
+{
+  "name": "mail",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Outlook and Hotmail mailbox manager powered by SQLite",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"tsx watch server/index.ts\" \"vite\"",
+    "build": "npm run build:web && npm run build:server",
+    "build:web": "vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "start": "cross-env NODE_ENV=production node build/server/index.js",
+    "test": "tsx --test server/**/*.test.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.0",
+    "express": "^5.1.0",
+    "imapflow": "^1.0.193",
+    "lucide-react": "^0.468.0",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^9.0.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sanitize-html": "^2.17.0",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^24.0.3",
+    "@types/nodemailer": "^8.0.1",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@types/sanitize-html": "^2.16.0",
+    "@vitejs/plugin-react": "^4.5.2",
+    "concurrently": "^9.1.2",
+    "cross-env": "^10.0.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}
