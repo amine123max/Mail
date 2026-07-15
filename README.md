@@ -163,6 +163,9 @@ Required production values:
 | `MAIL_VERIFICATION_SMTP_USER` | SMTP username | Configure together with password |
 | `MAIL_VERIFICATION_SMTP_PASSWORD` | SMTP password or app password | Store as a secret |
 | `MAIL_VERIFICATION_FROM` | Verification sender address | Required in production |
+| `VITE_BASE_PATH` | Frontend build base path | `/` at root or `/mail/` for a subpath |
+| `MAIL_COOKIE_PATH` | Session cookie path | Match the deployment path, for example `/mail` |
+| `MAIL_BIND_PORT` | Docker loopback bind port | Defaults to `3000` |
 | `HOST` | API bind address | `127.0.0.1` by default |
 | `PORT` | API port | `3000` in production |
 | `MAIL_DATA_DIR` | SQLite data directory | Defaults to `./data` |
@@ -187,6 +190,15 @@ docker compose up -d --build
 ```
 
 Docker Compose refuses to start when required secrets are missing. The runtime container uses the non-root `node` user.
+
+The first administrator can also be provisioned once through standard input:
+
+```bash
+printf '%s' '{"username":"admin","email":"admin@example.com","password":"replace-with-a-strong-password"}' \
+  | docker compose exec -T mail npm run bootstrap-admin
+```
+
+For an Nginx `/mail` deployment, use a trailing slash in `proxy_pass http://127.0.0.1:3000/;` so the external subpath is removed before requests reach Express.
 
 ## Security Model
 

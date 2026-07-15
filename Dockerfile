@@ -1,5 +1,7 @@
 FROM node:24-alpine AS build
 WORKDIR /app
+ARG VITE_BASE_PATH=/mail/
+ENV VITE_BASE_PATH=$VITE_BASE_PATH
 COPY package*.json ./
 RUN npm ci
 COPY . .

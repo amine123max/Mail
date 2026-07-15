@@ -5,6 +5,8 @@ import {
   scryptSync,
   timingSafeEqual,
 } from "node:crypto";
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import type { NextFunction, Request, Response } from "express";
 import nodemailer from "nodemailer";
 import {
@@ -39,6 +41,10 @@ export interface Identity {
 const signingKey = process.env.MAIL_SESSION_SECRET || randomBytes(32).toString("base64url");
 const userLifetimeSeconds = 60 * 60 * 24 * 30;
 const guestLifetimeSeconds = 60 * 60 * 24 * 400;
+const configuredCookiePath = process.env.MAIL_COOKIE_PATH?.trim() || "/";
+const cookiePath = /^\/[A-Za-z0-9/_-]*$/.test(configuredCookiePath)
+  ? configuredCookiePath.replace(/\/$/, "") || "/"
+  : "/";
 export const verificationLifetimeSeconds = 5 * 60;
 export const verificationCooldownSeconds = 60;
 
@@ -145,6 +151,30 @@ function verificationTransport() {
   };
 }
 
+export function buildVerificationMessage(code: string): {
+  subject: string;
+  text: string;
+  html: string;
+} {
+  return {
+    subject: "Mail 验证码 / Verification code",
+    text: [
+      "输入此临时验证码以继续：",
+      code,
+      "",
+      "验证码将在 5 分钟后失效。如果并非你本人操作，请忽略此邮件。",
+      "",
+      "Enter this temporary verification code to continue:",
+      code,
+      "",
+      "This code expires in 5 minutes. If you did not request it, ignore this email.",
+      "",
+      "Mail · https://www.aillive.xyz/mail",
+    ].join("\n"),
+    html: `<!doctype html><html><body style="margin:0;padding:0;background:#ffffff;color:#111827;font-family:Arial,'Microsoft YaHei',sans-serif"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#ffffff"><tr><td align="center" style="padding:36px 18px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:660px"><tr><td style="padding-bottom:58px"><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="vertical-align:middle"><img src="cid:mail-brand-logo" width="62" height="62" alt="Mail" style="display:block;border:0;object-fit:contain"></td><td style="padding-left:12px;vertical-align:middle;font-size:34px;line-height:1;font-weight:800;letter-spacing:-1px;color:#09090b">Mail</td></tr></table></td></tr><tr><td style="font-size:22px;line-height:1.55;color:#111827;padding-bottom:28px">输入此临时验证码以继续：</td></tr><tr><td style="padding:0 0 30px"><div style="padding:30px 36px;border-radius:22px;background:#f3f4f6;font-size:38px;line-height:1;letter-spacing:8px;color:#4b5563;font-weight:500">${code}</div></td></tr><tr><td style="font-size:18px;line-height:1.7;color:#1f2937;padding-bottom:26px">如果并非你本人尝试注册或登录 Mail，请忽略此电子邮件。</td></tr><tr><td style="font-size:15px;line-height:1.7;color:#6b7280;padding-bottom:58px">此验证码将在 5 分钟后失效，请勿向任何人透露。</td></tr><tr><td style="border-top:1px solid #e5e7eb;padding-top:30px"><table role="presentation" cellspacing="0" cellpadding="0"><tr><td style="vertical-align:middle"><img src="cid:mail-brand-logo" width="34" height="34" alt="" style="display:block;border:0;object-fit:contain"></td><td style="padding-left:8px;vertical-align:middle;font-size:20px;font-weight:800;color:#09090b">Mail</td></tr></table><div style="padding-top:18px;font-size:13px;line-height:1.8;color:#6b7280"><a href="https://www.aillive.xyz/mail" style="color:#4b5563">打开 Mail</a><br>安全管理 Outlook 与 Hotmail 邮箱</div></td></tr></table></td></tr></table></body></html>`,
+  };
+}
+
 export async function requestRegistrationCode(
   emailInput: string,
   purpose: "setup" | "register",
@@ -171,21 +201,21 @@ export async function requestRegistrationCode(
   const code = randomInt(0, 1_000_000).toString().padStart(6, "0");
   const expiresAt = new Date(Date.now() + verificationLifetimeSeconds * 1000);
   const { from, transporter } = verificationTransport();
+  const message = buildVerificationMessage(code);
+  const logoPath = [
+    resolve("./dist/paper-plane-logo.png"),
+    resolve("./public/paper-plane-logo.png"),
+  ].find((candidate) => existsSync(candidate));
   saveEmailVerification(email, hashVerificationCode(email, code), expiresAt);
 
   try {
     await transporter.sendMail({
       from,
       to: email,
-      subject: "Mail 注册验证码 / Registration code",
-      text: [
-        `你的 Mail 注册验证码是：${code}`,
-        "验证码将在 5 分钟后失效，请勿向任何人透露。",
-        "",
-        `Your Mail registration code is: ${code}`,
-        "This code expires in 5 minutes. Never share it with anyone.",
-      ].join("\n"),
-      html: `<div style="font-family:Arial,sans-serif;line-height:1.7;color:#18181b"><h2>Mail</h2><p>你的注册验证码是：</p><p style="font-size:30px;font-weight:700;letter-spacing:8px">${code}</p><p>验证码将在 <strong>5 分钟</strong>后失效，请勿向任何人透露。</p><hr style="border:0;border-top:1px solid #e4e4e7"><p>Your registration code is:</p><p style="font-size:30px;font-weight:700;letter-spacing:8px">${code}</p><p>This code expires in <strong>5 minutes</strong>. Never share it with anyone.</p></div>`,
+      ...message,
+      attachments: logoPath
+        ? [{ filename: "mail-logo.png", path: logoPath, cid: "mail-brand-logo" }]
+        : [],
     });
   } catch {
     deleteEmailVerification(email);
@@ -233,7 +263,7 @@ function signedCookie(
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   return [
     `${name}=${encodeURIComponent(`${encoded}.${sign(encoded)}`)}`,
-    "Path=/",
+    `Path=${cookiePath}`,
     "HttpOnly",
     "SameSite=Strict",
     `Max-Age=${maxAge}`,
@@ -301,6 +331,28 @@ export function initializeAdministrator(
   }
 }
 
+export function bootstrapAdministrator(
+  usernameInput: string,
+  emailInput: string,
+  password: string,
+): UserRow {
+  const username = usernameInput.trim();
+  const email = normalizeEmail(emailInput);
+  if (!isSetupRequired()) {
+    throw new AuthError("管理员初始化已完成", "SETUP_ALREADY_COMPLETED", 409);
+  }
+  if (!/^[A-Za-z0-9_]{3,32}$/.test(username)) {
+    throw new AuthError("管理员用户名格式不正确", "INVALID_ADMIN_USERNAME", 400);
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new AuthError("管理员邮箱格式不正确", "INVALID_ADMIN_EMAIL", 400);
+  }
+  if (password.length < 12 || password.length > 128) {
+    throw new AuthError("管理员密码必须为 12-128 位", "INVALID_ADMIN_PASSWORD", 400);
+  }
+  return createAdministrator(username, hashPassword(password), email);
+}
+
 export function createSessionCookie(request: Request, user: UserRow): string {
   const sessionId = randomBytes(24).toString("base64url");
   const expiresAt = new Date(Date.now() + userLifetimeSeconds * 1000);
@@ -341,9 +393,13 @@ export function renewGuestIdentity(request: Request, guestId: string): string {
 
 export function clearSessionCookies(): string[] {
   return [
-    "mail_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
-    "mail_guest=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+    `mail_session=; Path=${cookiePath}; HttpOnly; SameSite=Strict; Max-Age=0`,
+    clearGuestCookie(),
   ];
+}
+
+export function clearGuestCookie(): string {
+  return `mail_guest=; Path=${cookiePath}; HttpOnly; SameSite=Strict; Max-Age=0`;
 }
 
 export function getGuestId(request: Request): string | null {

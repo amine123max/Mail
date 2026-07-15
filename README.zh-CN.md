@@ -159,6 +159,9 @@ npm start
 | `MAIL_VERIFICATION_SMTP_USER` | SMTP 用户名 | 与密码成对配置 |
 | `MAIL_VERIFICATION_SMTP_PASSWORD` | SMTP 密码或应用密码 | 使用 Secret 管理 |
 | `MAIL_VERIFICATION_FROM` | 验证码发件地址 | 生产环境必填 |
+| `VITE_BASE_PATH` | 前端构建子路径 | 根路径用 `/`，子路径示例 `/mail/` |
+| `MAIL_COOKIE_PATH` | 会话 Cookie 路径 | 应与部署子路径一致，如 `/mail` |
+| `MAIL_BIND_PORT` | Docker 仅本机监听端口 | 默认 `3000` |
 | `HOST` | API 监听地址 | 默认 `127.0.0.1` |
 | `PORT` | API 端口 | 生产默认 `3000` |
 | `MAIL_DATA_DIR` | SQLite 数据目录 | 默认 `./data` |
@@ -183,6 +186,15 @@ docker compose up -d --build
 ```
 
 缺少必填 secret 时 Docker Compose 会拒绝启动；运行容器使用非 root 的 `node` 用户。
+
+首次部署也可以通过一次性标准输入创建管理员：
+
+```bash
+printf '%s' '{"username":"admin","email":"admin@example.com","password":"replace-with-a-strong-password"}' \
+  | docker compose exec -T mail npm run bootstrap-admin
+```
+
+通过 Nginx 部署到 `/mail` 时，应让 `location /mail/` 使用带尾斜杠的 `proxy_pass http://127.0.0.1:3000/;`，由代理移除外部子路径。
 
 ## 安全模型
 

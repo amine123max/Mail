@@ -52,6 +52,15 @@ describe("first deployment administrator setup", () => {
 });
 
 describe("registration email verification", () => {
+  it("renders the Mail branded five-minute verification template", () => {
+    const message = auth.buildVerificationMessage("754443");
+    assert.match(message.subject, /Mail/);
+    assert.match(message.html, /cid:mail-brand-logo/);
+    assert.match(message.html, /754443/);
+    assert.match(message.html, /5 分钟/);
+    assert.doesNotMatch(message.html, /OpenAI|ChatGPT/);
+  });
+
   it("uses a five-minute lifetime and consumes a valid code once", () => {
     assert.equal(auth.verificationLifetimeSeconds, 300);
     const email = "verified@example.invalid";

@@ -1,9 +1,12 @@
 services:
   mail:
-    build: .
+    build:
+      context: .
+      args:
+        VITE_BASE_PATH: ${VITE_BASE_PATH:-/mail/}
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:${MAIL_BIND_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
       HOST: 0.0.0.0
@@ -17,6 +20,8 @@ services:
       MAIL_VERIFICATION_SMTP_PASSWORD: ${MAIL_VERIFICATION_SMTP_PASSWORD:?必须设置验证码 SMTP 密码}
       MAIL_VERIFICATION_FROM: ${MAIL_VERIFICATION_FROM:?必须设置验证码发件地址}
       MAIL_DATA_DIR: /app/data
+      MAIL_COOKIE_PATH: ${MAIL_COOKIE_PATH:-/mail}
+      MAIL_TRUST_PROXY: 1
     volumes:
       - mail-data:/app/data
 

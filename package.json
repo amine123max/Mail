@@ -9,6 +9,7 @@
     "build:web": "vite build",
     "build:server": "tsc -p tsconfig.server.json",
     "start": "cross-env NODE_ENV=production node build/server/index.js",
+    "bootstrap-admin": "node build/server/bootstrap-admin.js",
     "test": "tsx --test server/**/*.test.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
   },

@@ -10,6 +10,7 @@ import { z } from "zod";
 import {
   AuthError,
   authenticate,
+  clearGuestCookie,
   clearSessionCookies,
   createGuestIdentity,
   createSessionCookie,
@@ -234,7 +235,7 @@ app.post("/api/auth/login", limitAuth, (request, response) => {
   const transferred = guestId ? transferGuestAccounts(guestId, user.id) : 0;
   response.setHeader("Set-Cookie", [
     createSessionCookie(request, user),
-    "mail_guest=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+    clearGuestCookie(),
   ]);
   response.json({ authenticated: true, username: user.username, transferred });
 });
@@ -253,7 +254,7 @@ app.post("/api/auth/register", limitAuth, (request, response) => {
   const transferred = guestId ? transferGuestAccounts(guestId, user.id) : 0;
   response.setHeader("Set-Cookie", [
     createSessionCookie(request, user),
-    "mail_guest=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+    clearGuestCookie(),
   ]);
   response.status(201).json({ authenticated: true, username: user.username, transferred });
 });

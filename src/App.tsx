@@ -51,6 +51,7 @@ import { useI18n } from "./i18n";
 
 type Page = "inbox" | "accounts" | "settings";
 type Toast = { id: number; message: string; type: "success" | "error" };
+const brandLogoUrl = `${import.meta.env.BASE_URL}paper-plane-logo.png`;
 
 const folderDefinitions = [
   { specialUse: "\\Inbox", fallback: "INBOX", label: "收件箱", icon: Inbox },
@@ -216,7 +217,7 @@ function App() {
   const sidebar = (
     <>
       <div className="brand-row">
-        <div className="brand-mark"><img src="/paper-plane-logo.png" alt="" /></div>
+        <div className="brand-mark"><img src={brandLogoUrl} alt="" /></div>
         <span>Mail</span>
         <button className="mobile-close" onClick={() => setMobileNavOpen(false)}><X size={18} /></button>
       </div>
@@ -449,7 +450,7 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
   return (
     <div className="login-page">
       <div className="login-top-brand">
-        <div className="brand-mark"><img src="/paper-plane-logo.png" alt="" /></div>
+        <div className="brand-mark"><img src={brandLogoUrl} alt="" /></div>
         <span>Mail</span>
       </div>
       <div className="login-actions">
@@ -610,7 +611,7 @@ function EmptyMailbox({ openImport }: { openImport: () => void }) {
   const { t } = useI18n();
   return (
     <section className="empty-mailbox">
-      <div className="empty-brand"><img src="/paper-plane-logo.png" alt="" /><span>Mail</span></div>
+      <div className="empty-brand"><img src={brandLogoUrl} alt="" /><span>Mail</span></div>
       <button className="button primary large-button" onClick={openImport}><Plus size={17} /> {t("导入")}</button>
       <div className="empty-features"><span><ShieldCheck size={16} /> {t("AES-256 加密")}</span><span><Database size={16} /> {t("SQLite 存储")}</span><span><Cloud size={16} /> {t("OAuth2 连接")}</span></div>
     </section>

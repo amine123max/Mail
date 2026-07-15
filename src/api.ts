@@ -52,11 +52,17 @@ export class ApiError extends Error {
   }
 }
 
+const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+function resolveApiPath(path: string): string {
+  return path.startsWith("/api/") ? `${appBasePath}${path}` : path;
+}
+
 export async function api<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(resolveApiPath(path), {
     ...init,
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
