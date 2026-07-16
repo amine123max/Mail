@@ -280,7 +280,7 @@ function App() {
       </div>
       <div className="sidebar-foot">
         {authState === "authenticated" && currentUser && <div className="sidebar-user"><span className="sidebar-user-avatar">{currentUser.username.slice(0, 2).toUpperCase()}</span><span className="sidebar-user-copy"><strong>{currentUser.username}</strong><small>{currentUser.administrator ? t("管理员") : t("Mail 用户")}</small></span><ShieldCheck size={17} /></div>}
-        <div className="storage-line"><Database size={15} /><span>{t("SQLite 本地存储")}</span><ShieldCheck size={15} /></div>
+        {authState !== "authenticated" && <div className="storage-line"><Database size={15} /><span>{t("SQLite 本地存储")}</span><ShieldCheck size={15} /></div>}
       </div>
     </>
   );
