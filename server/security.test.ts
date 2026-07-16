@@ -50,6 +50,7 @@ describe("first deployment administrator setup", () => {
       auth.authenticate("owner@example.invalid", "owner-password-123")?.id,
       administrator.id,
     );
+    assert.equal(auth.authenticate("owner_admin", "owner-password-123"), null);
     assert.throws(
       () => auth.bootstrapAdministrator("second_admin", "second@example.invalid", "second-password-123"),
       /管理员初始化已完成/,
@@ -64,7 +65,23 @@ describe("registration email verification", () => {
     assert.match(message.html, /cid:mail-brand-logo/);
     assert.match(message.html, /754443/);
     assert.match(message.html, /5 分钟/);
+    assert.match(message.html, /text-align:center/);
+    assert.doesNotMatch(message.html, />Mail<\/td>/);
+    assert.doesNotMatch(message.html, /如果并非你本人尝试注册或登录 Mail/);
+    assert.doesNotMatch(message.html, /安全管理 Outlook 与 Hotmail 邮箱/);
     assert.doesNotMatch(message.html, /OpenAI|ChatGPT/);
+  });
+
+  it("localizes the verification email from the preferred browser language", () => {
+    assert.equal(auth.resolveVerificationLanguage("en-US,en;q=0.9,zh;q=0.8"), "en");
+    assert.equal(auth.resolveVerificationLanguage("fr-FR,zh-CN;q=0.9,en;q=0.8"), "zh");
+    assert.equal(auth.resolveVerificationLanguage(undefined), "zh");
+
+    const english = auth.buildVerificationMessage("123456", "en");
+    assert.equal(english.subject, "Mail verification code");
+    assert.match(english.html, /Enter this temporary verification code to continue/);
+    assert.match(english.html, /This code expires in 5 minutes/);
+    assert.doesNotMatch(english.html, /输入此临时验证码|安全管理 Outlook/);
   });
 
   it("uses a five-minute lifetime and consumes a valid code once", () => {

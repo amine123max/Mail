@@ -21,6 +21,7 @@ import {
   type Identity,
   registerUser,
   requestRegistrationCode,
+  resolveVerificationLanguage,
   renewGuestIdentity,
   requireIdentity,
   requireUser,
@@ -194,9 +195,11 @@ app.post(
       .object({
         email: z.string().trim().email("邮箱地址格式不正确").max(254),
         purpose: z.enum(["setup", "register"]),
+        language: z.enum(["zh", "en"]).optional(),
       })
       .parse(request.body);
-    response.json(await requestRegistrationCode(body.email, body.purpose));
+    const language = body.language || resolveVerificationLanguage(request.headers["accept-language"]);
+    response.json(await requestRegistrationCode(body.email, body.purpose, language));
   }),
 );
 
@@ -224,11 +227,14 @@ app.post("/api/auth/login", limitAuth, (request, response) => {
     throw new AuthError("请先完成管理员初始化", "SETUP_REQUIRED", 409);
   }
   const body = z
-    .object({ username: z.string().min(1), password: z.string().min(1) })
+    .object({
+      email: z.string().trim().email("邮箱地址格式不正确").max(254),
+      password: z.string().min(1),
+    })
     .parse(request.body);
-  const user = authenticate(body.username, body.password);
+  const user = authenticate(body.email, body.password);
   if (!user) {
-    response.status(401).json({ error: "用户名、邮箱或密码错误", code: "LOGIN_FAILED" });
+    response.status(401).json({ error: "邮箱或密码错误", code: "LOGIN_FAILED" });
     return;
   }
   const guestId = getGuestId(request);

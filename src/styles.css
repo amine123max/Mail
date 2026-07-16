@@ -372,6 +372,8 @@ button { color: inherit; }
   .topbar { gap: 9px; padding-inline: 12px; }
   .search-box { width: auto; flex: 1; }
   .search-box kbd, .notification-button { display: none; }
+  .guest-badge { width: 34px; height: 34px; justify-content: center; flex: none; padding: 0; }
+  .guest-badge > span { display: none; }
   .main-content { padding: 20px 12px 24px; }
   .page-header { align-items: flex-start; flex-direction: column; gap: 14px; }
   .page-actions { width: 100%; flex-wrap: wrap; }

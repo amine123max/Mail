@@ -284,7 +284,7 @@ function App() {
             <kbd>↵</kbd>
           </form>
           <div className="top-actions">
-            {authState === "guest" && <span className="guest-badge"><UserRound size={14} /> {t("游客模式")}</span>}
+            {authState === "guest" && <span className="guest-badge" aria-label={t("游客模式")} title={t("游客模式")}><UserRound size={14} /><span>{t("游客模式")}</span></span>}
             <button className="language-toggle" onClick={() => setLanguage(language === "zh" ? "en" : "zh")} aria-label={t("界面语言")}>
               <Languages size={15} /> {language === "zh" ? "EN" : "中文"}
             </button>
@@ -395,7 +395,7 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
     try {
       const result = await api<{ retryAfter: number }>("/api/auth/verification/request", {
         method: "POST",
-        body: JSON.stringify({ email, purpose: mode === "setup" ? "setup" : "register" }),
+        body: JSON.stringify({ email, purpose: mode === "setup" ? "setup" : "register", language }),
       });
       setResendSeconds(result.retryAfter || 60);
       setNotice(t("验证码已发送，5 分钟内有效"));
@@ -413,7 +413,7 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
     try {
       const endpoint = mode === "login" ? "/api/auth/login" : mode === "setup" ? "/api/auth/setup" : "/api/auth/register";
       const body = mode === "login"
-        ? { username, password }
+        ? { email, password }
         : { username, email, password, verificationCode };
       await api(endpoint, { method: "POST", body: JSON.stringify(body) });
       onLogin();
@@ -449,13 +449,14 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
         <h1>{mode === "setup" ? t("配置管理员") : mode === "login" ? t("欢迎回来") : t("创建个人空间")}</h1>
         {!setupRequired && <div className="auth-tabs"><button className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}>{t("登录")}</button><button className={mode === "register" ? "active" : ""} onClick={() => changeMode("register")}>{t("注册")}</button></div>}
         <form onSubmit={submit}>
-          <label className="stack-field"><span>{mode === "login" ? t("用户名或邮箱") : t("用户名")}</span><input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" placeholder={mode !== "login" ? t("3-32 位字母、数字或下划线") : t("输入用户名或邮箱")} /></label>
-          {mode !== "login" && <label className="stack-field"><span>{t("邮箱")}</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder="name@example.com" /></label>}
+          {mode === "login"
+            ? <label className="stack-field"><span>{t("邮箱")}</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder={t("输入邮箱地址")} /></label>
+            : <><label className="stack-field"><span>{t("用户名")}</span><input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" placeholder={t("3-32 位字母、数字或下划线")} /></label><label className="stack-field"><span>{t("邮箱")}</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder="name@example.com" /></label></>}
           <label className="stack-field"><span>{t("密码")}</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "setup" ? t("管理员密码至少 12 位") : mode === "register" ? t("至少 8 位密码") : t("输入密码")} autoComplete={mode === "login" ? "current-password" : "new-password"} /></label>
           {mode !== "login" && <label className="stack-field"><span>{t("验证码")}</span><div className="verification-control"><input value={verificationCode} onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" placeholder={t("6 位验证码")} /><button type="button" disabled={!email || sendingCode || resendSeconds > 0} onClick={sendVerificationCode}>{sendingCode ? t("发送中…") : resendSeconds > 0 ? t("{seconds} 秒后重发", { seconds: resendSeconds }) : t("发送验证码")}</button></div></label>}
           {notice && <div className="login-notice"><CheckCircle2 size={15} />{notice}</div>}
           {error && <div className="login-error"><CircleAlert size={15} />{error}</div>}
-          <button className="button primary full login-submit" disabled={!username || !password || loading || (mode !== "login" && (!email || verificationCode.length !== 6))}><LockKeyhole size={16} />{loading ? t("处理中…") : mode === "setup" ? t("完成管理员配置") : mode === "login" ? t("登录 Mail") : t("创建账号")}</button>
+          <button className="button primary full login-submit" disabled={(mode === "login" ? !email : !username || !email || verificationCode.length !== 6) || !password || loading}><LockKeyhole size={16} />{loading ? t("处理中…") : mode === "setup" ? t("完成管理员配置") : mode === "login" ? t("登录 Mail") : t("创建账号")}</button>
         </form>
         {!setupRequired && <><div className="guest-divider"><span>{t("或者")}</span></div><button className="button secondary full guest-button" disabled={loading} onClick={enterGuest}><UserRound size={16} /> {t("以游客模式继续")}</button></>}
       </section>

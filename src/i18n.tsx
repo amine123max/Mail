@@ -80,6 +80,7 @@ const english: Record<string, string> = {
   "用户名": "Username",
   "用户名或邮箱": "Username or email",
   "输入用户名或邮箱": "Enter username or email",
+  "输入邮箱地址": "Enter your email address",
   "密码": "Password",
   "输入管理员密码": "Enter administrator password",
   "登录 Mail": "Sign in to Mail",
@@ -164,9 +165,11 @@ interface I18nValue {
 const I18nContext = createContext<I18nValue | null>(null);
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [language, setLanguageState] = useState<Language>(() =>
-    localStorage.getItem("mail-language") === "en" ? "en" : "zh",
-  );
+  const [language, setLanguageState] = useState<Language>(() => {
+    const stored = localStorage.getItem("mail-language");
+    if (stored === "zh" || stored === "en") return stored;
+    return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
+  });
   useEffect(() => {
     document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
   }, [language]);
