@@ -188,9 +188,32 @@ if (!privacyColumns.some((column) => column.name === "email_hash")) {
   }
 }
 
+const accountColumns = db.prepare("PRAGMA table_info(accounts)").all() as Array<{ name: string }>;
+if (!accountColumns.some((column) => column.name === "sort_order")) {
+  db.exec("ALTER TABLE accounts ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
+  const owners = db.prepare("SELECT DISTINCT owner_key FROM accounts").all() as Array<{ owner_key: string }>;
+  const orderedRows = db.prepare(`
+    SELECT id FROM accounts
+    WHERE owner_key = ?
+    ORDER BY updated_at DESC, id DESC
+  `);
+  const updateOrder = db.prepare("UPDATE accounts SET sort_order = ? WHERE owner_key = ? AND id = ?");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    for (const owner of owners) {
+      const rows = orderedRows.all(owner.owner_key) as Array<{ id: number }>;
+      rows.forEach((row, index) => updateOrder.run(index, owner.owner_key, row.id));
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 db.exec(`
-  CREATE INDEX IF NOT EXISTS idx_accounts_owner_updated
-    ON accounts(owner_key, updated_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_accounts_owner_sort
+    ON accounts(owner_key, sort_order ASC, id DESC);
   CREATE INDEX IF NOT EXISTS idx_guest_sessions_expiry
     ON guest_sessions(expires_at);
   CREATE INDEX IF NOT EXISTS idx_user_sessions_expiry
@@ -225,6 +248,7 @@ function createAccountsTable() {
       client_id_encrypted TEXT NOT NULL,
       refresh_token_encrypted TEXT NOT NULL,
       remark TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_sync_at TEXT,
@@ -250,7 +274,7 @@ function asStored(value: unknown): StoredAccountRow | undefined {
 
 export function listAccounts(ownerKey: string): PublicAccount[] {
   const rows = db
-    .prepare("SELECT * FROM accounts WHERE owner_key = ? ORDER BY updated_at DESC, id DESC")
+    .prepare("SELECT * FROM accounts WHERE owner_key = ? ORDER BY sort_order ASC, id DESC")
     .all(ownerKey) as unknown as StoredAccountRow[];
   return rows.map(toPublic);
 }
@@ -282,11 +306,12 @@ export function importAccounts(
   let skipped = 0;
 
   const find = db.prepare("SELECT id FROM accounts WHERE owner_key = ? AND email_hash = ?");
+  const nextOrder = db.prepare("SELECT COALESCE(MAX(sort_order), -1) + 1 AS value FROM accounts WHERE owner_key = ?");
   const insert = db.prepare(`
     INSERT INTO accounts (
       owner_key, email_encrypted, email_hash, password_encrypted, client_id_encrypted,
-      refresh_token_encrypted, remark
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      refresh_token_encrypted, remark, sort_order
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const update = db.prepare(`
     UPDATE accounts
@@ -325,6 +350,7 @@ export function importAccounts(
         );
         updated += 1;
       } else {
+        const order = Number((nextOrder.get(ownerKey) as { value: number }).value);
         insert.run(
           ownerKey,
           encrypted.email,
@@ -333,6 +359,7 @@ export function importAccounts(
           encrypted.clientId,
           encrypted.refreshToken,
           account.remark || "",
+          order,
         );
         inserted += 1;
       }
@@ -394,6 +421,33 @@ export function markAccountSynced(ownerKey: string, id: number): void {
 export function deleteAccount(ownerKey: string, id: number): boolean {
   const result = db.prepare("DELETE FROM accounts WHERE owner_key = ? AND id = ?").run(ownerKey, id);
   return result.changes > 0;
+}
+
+export function reorderAccounts(ownerKey: string, ids: number[]): boolean {
+  if (!ids.length || new Set(ids).size !== ids.length) return false;
+  const owned = db
+    .prepare("SELECT id FROM accounts WHERE owner_key = ?")
+    .all(ownerKey) as Array<{ id: number }>;
+  const ownedIds = new Set(owned.map((row) => row.id));
+  if (ownedIds.size !== ids.length || ids.some((id) => !ownedIds.has(id))) return false;
+
+  const update = db.prepare("UPDATE accounts SET sort_order = ? WHERE owner_key = ? AND id = ?");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    ids.forEach((id, index) => update.run(index, ownerKey, id));
+    db.exec("COMMIT");
+    return true;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function getAccountCredentialsBatch(ownerKey: string, ids: number[]): AccountCredentials[] {
+  const uniqueIds = Array.from(new Set(ids));
+  return uniqueIds
+    .map((id) => getAccountCredentials(ownerKey, id))
+    .filter((account): account is AccountCredentials => Boolean(account));
 }
 
 export function listAnnouncements(userId: number): { announcements: PublicAnnouncement[]; unreadCount: number } {
@@ -625,10 +679,12 @@ export function transferGuestAccounts(guestId: string, userId: number): number {
     db.prepare(`
       INSERT INTO accounts (
         owner_key, email_encrypted, email_hash, password_encrypted, client_id_encrypted,
-        refresh_token_encrypted, remark, created_at, updated_at, last_sync_at
+        refresh_token_encrypted, remark, sort_order, created_at, updated_at, last_sync_at
       )
       SELECT ?, email_encrypted, email_hash, password_encrypted, client_id_encrypted,
-        refresh_token_encrypted, remark, created_at, CURRENT_TIMESTAMP, last_sync_at
+        refresh_token_encrypted, remark,
+        ((SELECT COALESCE(MAX(sort_order), -1) + 1 FROM accounts WHERE owner_key = ?) + sort_order),
+        created_at, CURRENT_TIMESTAMP, last_sync_at
       FROM accounts WHERE owner_key = ?
       ON CONFLICT(owner_key, email_hash) DO UPDATE SET
         email_encrypted = excluded.email_encrypted,
@@ -637,7 +693,7 @@ export function transferGuestAccounts(guestId: string, userId: number): number {
         refresh_token_encrypted = excluded.refresh_token_encrypted,
         remark = excluded.remark,
         updated_at = CURRENT_TIMESTAMP
-    `).run(userOwner, guestOwner);
+    `).run(userOwner, userOwner, guestOwner);
     db.prepare("DELETE FROM accounts WHERE owner_key = ?").run(guestOwner);
     db.prepare("DELETE FROM guest_sessions WHERE id = ?").run(guestId);
     db.exec("COMMIT");

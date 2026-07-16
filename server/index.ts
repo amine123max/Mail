@@ -32,16 +32,19 @@ import {
   deleteGuestSession,
   deleteUserSession,
   deleteAccount,
+  getAccountCredentialsBatch,
   getAccountCredentials,
   importAccounts,
   isSetupRequired,
   listAccounts,
   listAnnouncements,
   markAnnouncementsRead,
+  reorderAccounts,
   transferGuestAccounts,
   updateAccount,
 } from "./database";
 import { parseAccountImport } from "./importer";
+import { serializeAccountExport } from "./exporter";
 import {
   getMessage,
   listFolders,
@@ -367,6 +370,34 @@ app.post("/api/accounts/import", (request, response) => {
   }
   const result = importAccounts(ownerKey, parsed.accounts, body.mode);
   response.status(201).json({ ...result, accounts: listAccounts(ownerKey) });
+});
+
+app.post("/api/accounts/export", (request, response) => {
+  const body = z.object({
+    ids: z.array(z.number().int().positive()).min(1).max(100),
+  }).parse(request.body);
+  const accounts = getAccountCredentialsBatch(identity(response).ownerKey, body.ids);
+  if (accounts.length !== new Set(body.ids).size) {
+    response.status(404).json({ error: "部分邮箱账号不存在" });
+    return;
+  }
+  response.setHeader("Cache-Control", "no-store, private");
+  response.setHeader("Pragma", "no-cache");
+  response.json({
+    filename: "mail.txt",
+    content: serializeAccountExport(accounts),
+  });
+});
+
+app.put("/api/accounts/order", (request, response) => {
+  const body = z.object({
+    ids: z.array(z.number().int().positive()).min(1).max(100),
+  }).parse(request.body);
+  if (!reorderAccounts(identity(response).ownerKey, body.ids)) {
+    response.status(400).json({ error: "邮箱账号顺序无效" });
+    return;
+  }
+  response.json({ accounts: listAccounts(identity(response).ownerKey) });
 });
 
 app.patch("/api/accounts/:id", (request, response) => {

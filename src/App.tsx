@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   ArrowLeft,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
@@ -10,6 +11,8 @@ import {
   CircleAlert,
   Cloud,
   Database,
+  Download,
+  EllipsisVertical,
   FilePenLine,
   Inbox,
   KeyRound,
@@ -23,6 +26,7 @@ import {
   Moon,
   Paperclip,
   Plus,
+  Copy,
   RefreshCw,
   Search,
   Send,
@@ -82,6 +86,14 @@ type MessageMoveConfirmation = {
   targetFolder: string;
   targetRoute: "archive" | "trash";
 };
+type AccountDragState = {
+  id: number;
+  pointerY: number;
+  offsetY: number;
+  left: number;
+  width: number;
+  height: number;
+};
 const brandLogoUrl = `${import.meta.env.BASE_URL}paper-plane-logo.png`;
 const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 const avatarGradients = [
@@ -104,6 +116,44 @@ function mailboxAddresses(value: string): string {
   if (bracketed.length) return Array.from(new Set(bracketed)).join(", ");
   const plain = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi);
   return plain?.length ? Array.from(new Set(plain)).join(", ") : value;
+}
+
+async function downloadAccountsFile(ids: number[]): Promise<void> {
+  const result = await api<{ filename: string; content: string }>("/api/accounts/export", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+  const blob = new Blob([result.content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = result.filename || "mail.txt";
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function copyPlainText(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // Fall back to a temporary textarea for browsers that deny Clipboard API access.
+    }
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("Clipboard access was denied");
 }
 
 function messageListDate(value: string, locale: string): string {
@@ -160,6 +210,18 @@ function App() {
   const [accountSearchOpen, setAccountSearchOpen] = useState(false);
   const [accountSearch, setAccountSearch] = useState("");
   const [accountsCollapsed, setAccountsCollapsed] = useState(false);
+  const [accountMenuId, setAccountMenuId] = useState<number | null>(null);
+  const [accountDeleteConfirmation, setAccountDeleteConfirmation] = useState<Account | null>(null);
+  const [accountDeleteLoading, setAccountDeleteLoading] = useState(false);
+  const [accountDrag, setAccountDrag] = useState<AccountDragState | null>(null);
+  const accountDragTimerRef = useRef<number | null>(null);
+  const accountDragGestureRef = useRef<{
+    id: number;
+    startY: number;
+    active: boolean;
+    order: number[];
+  } | null>(null);
+  const accountClickBlockUntilRef = useRef(0);
   const [mailPage, setMailPage] = useState(1);
   const [importOpen, setImportOpen] = useState(initialRoute.dialog === "import");
   const [composeOpen, setComposeOpen] = useState(initialRoute.dialog === "compose");
@@ -175,6 +237,7 @@ function App() {
   });
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) || null;
+  const draggedAccount = accountDrag ? accounts.find((item) => item.id === accountDrag.id) || null : null;
   const visibleFolders = useMemo(() => folderDefinitions.map((definition) => {
     const actual = folders.find((folder) => folder.specialUse === definition.specialUse)
       || folders.find((folder) => folder.path.toLowerCase() === definition.fallback.toLowerCase());
@@ -310,6 +373,143 @@ function App() {
       notify(error instanceof Error ? error.message : "无法读取账号", "error");
     }
   }, [notify]);
+
+  const clearAccountDragTimer = useCallback(() => {
+    if (accountDragTimerRef.current !== null) window.clearTimeout(accountDragTimerRef.current);
+    accountDragTimerRef.current = null;
+  }, []);
+
+  const persistAccountOrder = useCallback(async (ids: number[]) => {
+    try {
+      const result = await api<{ accounts: Account[] }>("/api/accounts/order", {
+        method: "PUT",
+        body: JSON.stringify({ ids }),
+      });
+      setAccounts(result.accounts);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "账号排序失败", "error");
+      await loadAccounts();
+    }
+  }, [loadAccounts, notify]);
+
+  const startAccountDrag = (account: Account, event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    const trigger = event.currentTarget;
+    const row = trigger.closest("[data-account-id]") as HTMLElement | null;
+    if (!row) return;
+    trigger.setPointerCapture(event.pointerId);
+    clearAccountDragTimer();
+    accountDragGestureRef.current = {
+      id: account.id,
+      startY: event.clientY,
+      active: false,
+      order: accounts.map((item) => item.id),
+    };
+    accountDragTimerRef.current = window.setTimeout(() => {
+      const gesture = accountDragGestureRef.current;
+      if (!gesture || gesture.id !== account.id) return;
+      const rect = row.getBoundingClientRect();
+      gesture.active = true;
+      accountClickBlockUntilRef.current = Date.now() + 1000;
+      setAccountMenuId(null);
+      setAccountDrag({
+        id: account.id,
+        pointerY: event.clientY,
+        offsetY: event.clientY - rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height,
+      });
+    }, 360);
+  };
+
+  const moveAccountDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const gesture = accountDragGestureRef.current;
+    if (!gesture) return;
+    const deltaY = event.clientY - gesture.startY;
+    if (!gesture.active) {
+      if (Math.abs(deltaY) > 9) {
+        clearAccountDragTimer();
+        accountDragGestureRef.current = null;
+      }
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    accountClickBlockUntilRef.current = Date.now() + 1000;
+    setAccountDrag((current) => current ? { ...current, pointerY: event.clientY } : current);
+
+    const targetRow = document
+      .elementsFromPoint(event.clientX, event.clientY)
+      .map((element) => element.closest("[data-account-id]") as HTMLElement | null)
+      .find((element) => element && Number(element.dataset.accountId) !== gesture.id);
+    const targetId = Number(targetRow?.dataset.accountId);
+    if (!Number.isInteger(targetId) || !gesture.order.includes(targetId)) return;
+
+    setAccounts((current) => {
+      const from = current.findIndex((item) => item.id === gesture.id);
+      const to = current.findIndex((item) => item.id === targetId);
+      if (from < 0 || to < 0 || from === to) return current;
+      const next = [...current];
+      const [dragged] = next.splice(from, 1);
+      next.splice(to, 0, dragged);
+      gesture.order = next.map((item) => item.id);
+      return next;
+    });
+  };
+
+  const finishAccountDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const gesture = accountDragGestureRef.current;
+    clearAccountDragTimer();
+    accountDragGestureRef.current = null;
+    if (!gesture?.active) return;
+    event.preventDefault();
+    event.stopPropagation();
+    accountClickBlockUntilRef.current = Date.now() + 1000;
+    setAccountDrag(null);
+    void persistAccountOrder(gesture.order);
+  };
+
+  const cancelAccountDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const gesture = accountDragGestureRef.current;
+    clearAccountDragTimer();
+    accountDragGestureRef.current = null;
+    if (!gesture?.active) return;
+    event.preventDefault();
+    event.stopPropagation();
+    accountClickBlockUntilRef.current = Date.now() + 1000;
+    setAccountDrag(null);
+    void persistAccountOrder(gesture.order);
+  };
+
+  const exportSidebarAccount = async (account: Account) => {
+    setAccountMenuId(null);
+    try {
+      await downloadAccountsFile([account.id]);
+      notify("账号已导出");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "账号导出失败", "error");
+    }
+  };
+
+  const confirmAccountDelete = async () => {
+    const account = accountDeleteConfirmation;
+    if (!account) return;
+    setAccountDeleteLoading(true);
+    try {
+      await api(`/api/accounts/${account.id}`, { method: "DELETE" });
+      setAccountDeleteConfirmation(null);
+      setAccountMenuId(null);
+      notify("账号已删除");
+      await loadAccounts();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "删除失败", "error");
+    } finally {
+      setAccountDeleteLoading(false);
+    }
+  };
+
+  useEffect(() => () => clearAccountDragTimer(), [clearAccountDragTimer]);
 
   useEffect(() => {
     if (authState === "authenticated" || authState === "guest") void loadAccounts();
@@ -609,18 +809,70 @@ function App() {
             </div>
           )}
           {!accountsCollapsed && filteredAccounts.map((account) => (
-            <button
+            <div
               key={account.id}
-              className={account.id === selectedAccountId ? "account-mini active" : "account-mini"}
-              onClick={() => { setSelectedAccountId(account.id); navigateTo("inbox"); }}
+              data-account-id={account.id}
+              className={`account-mini ${account.id === selectedAccountId ? "active" : ""} ${accountDrag?.id === account.id ? "drag-source" : ""}`}
             >
-              <span className="mini-avatar">{account.email.slice(0, 1).toUpperCase()}</span>
-              <span><strong>{account.remark || account.email.split("@")[0]}</strong><small>{account.email}</small></span>
-              <i className="status-dot" />
-            </button>
+              <button
+                type="button"
+                className="account-mini-main"
+                onPointerDown={(event) => startAccountDrag(account, event)}
+                onPointerMove={moveAccountDrag}
+                onPointerUp={finishAccountDrag}
+                onPointerCancel={cancelAccountDrag}
+                onContextMenu={(event) => event.preventDefault()}
+                onClick={(event) => {
+                  if (Date.now() < accountClickBlockUntilRef.current) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                  }
+                  setSelectedAccountId(account.id);
+                  navigateTo("inbox");
+                }}
+              >
+                <span className="mini-avatar">{account.email.slice(0, 1).toUpperCase()}</span>
+                <span className="account-mini-copy"><strong>{account.remark || account.email.split("@")[0]}</strong><small>{account.email}</small></span>
+              </button>
+              <button
+                type="button"
+                className="account-more"
+                aria-label={t("账号操作")}
+                aria-expanded={accountMenuId === account.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setAccountMenuId((current) => current === account.id ? null : account.id);
+                }}
+              ><EllipsisVertical size={16} /></button>
+              {accountMenuId === account.id && (
+                <>
+                  <button className="account-menu-dismiss" aria-label={t("关闭账号菜单")} onClick={() => setAccountMenuId(null)} />
+                  <div className="account-menu" role="menu">
+                    <button type="button" role="menuitem" className="account-menu-export" onClick={() => void exportSidebarAccount(account)}><Download size={16} /> {t("导出")}</button>
+                    <button type="button" role="menuitem" className="account-menu-delete" onClick={() => { setAccountMenuId(null); setAccountDeleteConfirmation(account); }}><Trash2 size={16} /> {t("删除")}</button>
+                  </div>
+                </>
+              )}
+            </div>
           ))}
           {!accountsCollapsed && Boolean(accountSearch.trim()) && !filteredAccounts.length && <div className="side-empty">{t("没有匹配的邮箱账号")}</div>}
         </div>
+        {accountDrag && draggedAccount && (
+          <div
+            className="account-drag-ghost"
+            style={{
+              left: accountDrag.left,
+              top: accountDrag.pointerY - accountDrag.offsetY,
+              width: accountDrag.width,
+              height: accountDrag.height,
+            }}
+          >
+            <span className="mini-avatar">{draggedAccount.email.slice(0, 1).toUpperCase()}</span>
+            <span className="account-mini-copy"><strong>{draggedAccount.remark || draggedAccount.email.split("@")[0]}</strong><small>{draggedAccount.email}</small></span>
+            <EllipsisVertical size={16} />
+          </div>
+        )}
       </div>
       <div className="sidebar-foot">
         {authState === "authenticated" && currentUser && <div className="sidebar-user"><span className="sidebar-user-avatar" style={{ background: avatarGradient(currentUser.username) }}>{currentUser.username.slice(0, 2).toUpperCase()}</span><span className="sidebar-user-copy"><strong>{currentUser.username}</strong><small>{currentUser.administrator ? t("管理员") : t("Mail 用户")}</small></span><ShieldCheck size={17} /></div>}
@@ -687,6 +939,7 @@ function App() {
           {page === "inbox" && (
             <InboxPage
               accounts={accounts}
+              account={selectedAccount}
               messages={messages}
               total={messageTotal}
               loading={loading}
@@ -716,6 +969,7 @@ function App() {
               notify={notify}
               reload={loadAccounts}
               authorize={(account) => { setOauthAccount(account); navigateTo("oauth"); }}
+              requestDelete={setAccountDeleteConfirmation}
             />
           )}
           {page === "settings" && (
@@ -747,6 +1001,12 @@ function App() {
         loading={messageActionLoading}
         onClose={() => { if (!messageActionLoading) setMessageMoveConfirmation(null); }}
         onConfirm={() => void confirmMessageMove()}
+      />
+      <AccountDeleteConfirmDialog
+        account={accountDeleteConfirmation}
+        loading={accountDeleteLoading}
+        onClose={() => { if (!accountDeleteLoading) setAccountDeleteConfirmation(null); }}
+        onConfirm={() => void confirmAccountDelete()}
       />
 
       <div className="toast-stack">
@@ -878,6 +1138,7 @@ function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string;
 
 function InboxPage(props: {
   accounts: Account[];
+  account: Account | null;
   messages: MessageSummary[];
   total: number;
   loading: boolean;
@@ -914,6 +1175,8 @@ function InboxPage(props: {
   const messageColumnRef = useRef<HTMLDivElement | null>(null);
   const resizeRef = useRef<{ startX: number; startWidth: number; currentWidth: number } | null>(null);
   const [resizingMailLayout, setResizingMailLayout] = useState(false);
+  const [mailboxCopied, setMailboxCopied] = useState(false);
+  const mailboxCopyTimerRef = useRef<number | null>(null);
   const [mailListWidth, setMailListWidth] = useState(() => {
     const stored = Number(localStorage.getItem("mail-list-column-width"));
     if (Number.isFinite(stored) && stored >= 420 && stored <= 1200) return stored;
@@ -974,7 +1237,22 @@ function InboxPage(props: {
     localStorage.setItem("mail-list-column-width", String(Math.round(width)));
   };
 
-  useEffect(() => () => clearLongPressTimer(), []);
+  useEffect(() => () => {
+    clearLongPressTimer();
+    if (mailboxCopyTimerRef.current !== null) window.clearTimeout(mailboxCopyTimerRef.current);
+  }, []);
+
+  const copyCurrentMailbox = async () => {
+    if (!props.account) return;
+    try {
+      await copyPlainText(props.account.email);
+      setMailboxCopied(true);
+      if (mailboxCopyTimerRef.current !== null) window.clearTimeout(mailboxCopyTimerRef.current);
+      mailboxCopyTimerRef.current = window.setTimeout(() => setMailboxCopied(false), 1800);
+    } catch {
+      setMailboxCopied(false);
+    }
+  };
 
   const startSwipeGesture = (message: MessageSummary, event: React.PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
@@ -1044,7 +1322,7 @@ function InboxPage(props: {
   return (
     <section ref={mailPanelRef} className={`mail-panel ${resizingMailLayout ? "resizing" : ""}`} style={{ "--mail-primary-size": `${(12.6 * props.fontScale).toFixed(1)}px`, "--mail-time-size": `${(10.8 * props.fontScale).toFixed(1)}px`, "--mail-secondary-size": `${(11.4 * props.fontScale).toFixed(1)}px`, "--mail-row-height": `${Math.round(54 * props.fontScale)}px`, "--mail-row-padding": `${Math.round(7 * props.fontScale)}px`, "--mail-list-width": `${mailListWidth}px` } as React.CSSProperties}>
         <div className="message-column" ref={messageColumnRef}>
-          <div className="column-head"><div className="column-title"><strong>{t("邮件列表")}</strong><span>{props.total + props.pendingSends.length} {t("封邮件")}</span></div><div className="column-actions"><button disabled={props.fontScale <= 0.9} onClick={() => props.setFontScale((value) => Math.max(0.9, Number((value - 0.1).toFixed(1))))} aria-label={t("减小邮件列表字号")}><Minus size={15} /></button><span className="font-scale-label">{Math.round(props.fontScale * 100)}%</span><button disabled={props.fontScale >= 1.4} onClick={() => props.setFontScale((value) => Math.min(1.4, Number((value + 0.1).toFixed(1))))} aria-label={t("增大邮件列表字号")}><Plus size={15} /></button><button onClick={props.reload} aria-label={t("同步")}><RefreshCw size={16} /></button></div></div>
+          <div className="column-head"><div className="column-title"><strong>{t("邮件列表")}</strong><span className="column-mailbox-meta"><span title={props.account?.email}>{props.account?.email}</span><button type="button" className={mailboxCopied ? "copied" : ""} onClick={() => void copyCurrentMailbox()} aria-label={t(mailboxCopied ? "已复制邮箱" : "复制邮箱")} title={t(mailboxCopied ? "已复制邮箱" : "复制邮箱")}>{mailboxCopied ? <Check size={13} /> : <Copy size={13} />}</button><em>{props.total + props.pendingSends.length} {t("封邮件")}</em></span></div><div className="column-actions"><button disabled={props.fontScale <= 0.9} onClick={() => props.setFontScale((value) => Math.max(0.9, Number((value - 0.1).toFixed(1))))} aria-label={t("减小邮件列表字号")}><Minus size={15} /></button><span className="font-scale-label">{Math.round(props.fontScale * 100)}%</span><button disabled={props.fontScale >= 1.4} onClick={() => props.setFontScale((value) => Math.min(1.4, Number((value + 0.1).toFixed(1))))} aria-label={t("增大邮件列表字号")}><Plus size={15} /></button><button onClick={props.reload} aria-label={t("同步")}><RefreshCw size={16} /></button></div></div>
           <div className="message-list">
             {props.pendingSends.map((pending) => (
               <div className={`message-row pending-send-row ${pending.status}`} key={pending.id}>
@@ -1263,6 +1541,42 @@ function MessageMoveConfirmDialog({
   );
 }
 
+function AccountDeleteConfirmDialog({
+  account,
+  loading,
+  onClose,
+  onConfirm,
+}: {
+  account: Account | null;
+  loading: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const { t } = useI18n();
+  if (!account) return null;
+  return (
+    <div className="message-action-backdrop" onMouseDown={onClose}>
+      <section
+        className="message-action-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("确认删除账号")}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="message-action-copy">
+          <div className="message-action-title">
+            <span className="danger"><Trash2 size={18} /></span>
+            <h2>{t("确认删除账号")}</h2>
+          </div>
+          <strong>{account.email}</strong>
+        </div>
+        <button className="message-action-option danger" disabled={loading} onClick={onConfirm}>{loading ? t("处理中…") : t("删除")}</button>
+        <button className="message-action-option cancel" disabled={loading} onClick={onClose}>{t("取消")}</button>
+      </section>
+    </div>
+  );
+}
+
 function EmptyMailbox({ openImport }: { openImport: () => void }) {
   const { t } = useI18n();
   return (
@@ -1274,8 +1588,18 @@ function EmptyMailbox({ openImport }: { openImport: () => void }) {
   );
 }
 
-function AccountsPage({ accounts, openImport, notify, reload, authorize }: { accounts: Account[]; openImport: () => void; notify: (message: string, type?: "success" | "error") => void; reload: () => void; authorize: (account: Account) => void }) {
+function AccountsPage({ accounts, openImport, notify, reload, authorize, requestDelete }: { accounts: Account[]; openImport: () => void; notify: (message: string, type?: "success" | "error") => void; reload: () => void; authorize: (account: Account) => void; requestDelete: (account: Account) => void }) {
   const { language, t } = useI18n();
+  const [exportMode, setExportMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [exporting, setExporting] = useState(false);
+  const allSelected = accounts.length > 0 && selectedIds.size === accounts.length;
+
+  useEffect(() => {
+    const available = new Set(accounts.map((account) => account.id));
+    setSelectedIds((current) => new Set(Array.from(current).filter((id) => available.has(id))));
+  }, [accounts]);
+
   const test = async (account: Account) => {
     try {
       const result = await api<{ canSend: boolean | null; receiveTransport?: "imap" | "outlook-rest" }>(`/api/accounts/${account.id}/test`, { method: "POST" });
@@ -1288,22 +1612,53 @@ function AccountsPage({ accounts, openImport, notify, reload, authorize }: { acc
       notify(error instanceof Error ? error.message : "连接测试失败", "error");
     }
   };
-  const remove = async (account: Account) => {
-    if (!window.confirm(`确定删除 ${account.email}？此操作只删除本地记录。`)) return;
-    try { await api(`/api/accounts/${account.id}`, { method: "DELETE" }); notify("账号已删除"); reload(); } catch (error) { notify(error instanceof Error ? error.message : "删除失败", "error"); }
+
+  const toggleSelected = (id: number) => {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
+
+  const cancelExportMode = () => {
+    setExportMode(false);
+    setSelectedIds(new Set());
+  };
+
+  const exportSelected = async () => {
+    if (!exportMode) {
+      setExportMode(true);
+      return;
+    }
+    const ids = accounts.filter((account) => selectedIds.has(account.id)).map((account) => account.id);
+    if (!ids.length) return;
+    setExporting(true);
+    try {
+      await downloadAccountsFile(ids);
+      notify("账号已导出");
+      cancelExportMode();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "账号导出失败", "error");
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <>
-      <PageHeader eyebrow="ACCOUNTS" title={t("账号管理")} description={t("管理 Outlook、Hotmail 与 Live 邮箱连接。")} actions={<button className="button primary" onClick={openImport}><Plus size={16} /> {t("导入账号")}</button>} />
+      <PageHeader eyebrow="ACCOUNTS" title={t("账号管理")} description={t("管理 Outlook、Hotmail 与 Live 邮箱连接。")} actions={<><button className="button account-header-button" disabled={exporting || !accounts.length || (exportMode && selectedIds.size === 0)} onClick={() => void exportSelected()}><Download size={16} /> {exportMode ? t("导出所选 ({count})", { count: selectedIds.size }) : t("导出账号")}</button><button className="button account-header-button" onClick={openImport}><Plus size={16} /> {t("导入账号")}</button></>} />
       <section className="account-summary-card"><div><span className="summary-icon"><Users size={22} /></span><div><strong>{t("{count} 个邮箱账号", { count: accounts.length })}</strong><p>{t("敏感字段均以 AES-256-GCM 加密写入 SQLite。")}</p></div></div><span className="secure-badge"><ShieldCheck size={15} /> {t("本地加密")}</span></section>
       <section className="accounts-card">
-        <div className="table-head"><span>{t("邮箱账号")}</span><span>{t("备注")}</span><span>{t("最后同步")}</span><span>{t("操作")}</span></div>
+        {exportMode && <div className="account-selection-bar"><button type="button" onClick={() => setSelectedIds(allSelected ? new Set() : new Set(accounts.map((account) => account.id)))}><span className={allSelected ? "selection-box checked" : "selection-box"}>{allSelected && <Check size={12} />}</span>{t(allSelected ? "取消全选" : "全选")}</button><span>{t("已选择 {count} 个账号", { count: selectedIds.size })}</span><button type="button" className="selection-cancel" onClick={cancelExportMode}>{t("取消")}</button></div>}
+        <div className={exportMode ? "table-head export-mode" : "table-head"}>{exportMode && <span /> }<span>{t("邮箱账号")}</span><span>{t("备注")}</span><span>{t("最后同步")}</span><span>{t("操作")}</span></div>
         {accounts.map((account) => (
-          <div className="account-row" key={account.id}>
+          <div className={exportMode ? "account-row export-mode" : "account-row"} key={account.id}>
+            {exportMode && <button type="button" className="account-check" onClick={() => toggleSelected(account.id)} aria-label={t(selectedIds.has(account.id) ? "取消选择 {email}" : "选择 {email}", { email: account.email })}><span className={selectedIds.has(account.id) ? "selection-box checked" : "selection-box"}>{selectedIds.has(account.id) && <Check size={12} />}</span></button>}
             <div className="account-identity"><span className="account-avatar">{account.email.slice(0, 1).toUpperCase()}</span><div><strong>{account.email}</strong><small><i className="status-dot" /> Outlook OAuth2</small></div></div>
             <span>{account.remark || t("未添加备注")}</span>
             <span>{formatDate(account.lastSyncAt, true, language === "en" ? "en-US" : "zh-CN")}</span>
-            <div className="row-actions"><button onClick={() => test(account)}><RefreshCw size={15} /> {t("测试")}</button><button onClick={() => authorize(account)}><KeyRound size={15} /> {t("授权")}</button><button className="danger" onClick={() => remove(account)}><Trash2 size={15} /></button></div>
+            <div className="row-actions"><button onClick={() => test(account)}><RefreshCw size={15} /> {t("测试")}</button><button onClick={() => authorize(account)}><KeyRound size={15} /> {t("授权")}</button><button className="danger" aria-label={t("删除 {email}", { email: account.email })} title={t("删除 {email}", { email: account.email })} onClick={() => requestDelete(account)}><Trash2 size={15} /></button></div>
           </div>
         ))}
         {!accounts.length && <div className="empty-table"><Users size={24} /><span>{t("还没有导入邮箱账号")}</span><button className="button secondary" onClick={openImport}>{t("立即导入")}</button></div>}

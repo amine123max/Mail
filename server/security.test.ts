@@ -29,6 +29,12 @@ const beta = {
   clientId: "beta-client-id",
   refreshToken: "beta-refresh-token-long-enough",
 };
+const gamma = {
+  email: "gamma@example.invalid",
+  password: "gamma-password",
+  clientId: "gamma-client-id",
+  refreshToken: "gamma-refresh-token-long-enough",
+};
 const guest = {
   email: "guest@example.invalid",
   password: "guest-password",
@@ -232,6 +238,22 @@ describe("multi-tenant account isolation", () => {
     assert.ok(raw.refresh_token_encrypted.startsWith("v1:"));
     assert.equal(Object.values(raw).some((value) => value.includes(beta.password) || value.includes(beta.email)), false);
     rawDatabase.close();
+  });
+
+  it("persists account order and never exports another owner's credentials", () => {
+    database.importAccounts("user:202", [gamma], "skip");
+    const current = database.listAccounts("user:202");
+    const reversedIds = current.map((account) => account.id).reverse();
+    assert.equal(database.reorderAccounts("user:202", reversedIds), true);
+    assert.deepEqual(database.listAccounts("user:202").map((account) => account.id), reversedIds);
+
+    const alphaId = database.listAccounts("user:101").find((account) => account.email === alpha.email)!.id;
+    assert.equal(database.reorderAccounts("user:202", [...reversedIds, alphaId]), false);
+    assert.deepEqual(
+      database.getAccountCredentialsBatch("user:202", [...reversedIds, alphaId]).map((account) => account.email),
+      database.listAccounts("user:202").map((account) => account.email),
+    );
+    assert.equal(database.getAccountCredentialsBatch("user:202", [alphaId]).length, 0);
   });
 });
 

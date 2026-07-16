@@ -7,6 +7,7 @@ export interface StoredAccountRow {
   client_id_encrypted: string;
   refresh_token_encrypted: string;
   remark: string;
+  sort_order: number;
   created_at: string;
   updated_at: string;
   last_sync_at: string | null;
