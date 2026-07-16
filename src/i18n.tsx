@@ -152,7 +152,6 @@ const english: Record<string, string> = {
   "保存草稿": "Save draft",
   "发送邮件": "Send message",
   "发送中…": "Sending…",
-  "邮件正在后台发送…": "Sending in the background…",
   "发送失败": "Send failed",
   "申请 IMAP 收件、SMTP / Graph 发件与离线刷新权限": "Request IMAP receiving, SMTP / Graph sending, and offline refresh permissions",
   "开始设备授权": "Start device authorization",

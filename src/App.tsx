@@ -693,7 +693,7 @@ function InboxPage(props: {
                 <span className="message-copy">
                   <span className="message-meta"><strong>{pending.from}</strong><time>{formatDate(pending.createdAt, false, language === "en" ? "en-US" : "zh-CN")}</time></span>
                   <span className="message-subject">{pending.subject || t("邮件主题")}</span>
-                  <small>{pending.status === "sending" ? t("邮件正在后台发送…") : `${t("发送失败")}：${pending.error || t("发送失败")}`}</small>
+                  <small>{pending.status === "sending" ? t("发送中…") : `${t("发送失败")}：${pending.error || t("发送失败")}`}</small>
                 </span>
                 <i className="pending-send-progress" aria-hidden="true" />
               </div>

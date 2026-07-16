@@ -114,7 +114,8 @@ button { color: inherit; }
 
 .workspace { min-width: 0; flex: 1; margin-left: 244px; }
 .topbar { position: sticky; top: 0; z-index: 20; height: 60px; display: flex; align-items: center; gap: 16px; padding: 0 30px; border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent); background: color-mix(in srgb, var(--background) 88%, transparent); backdrop-filter: blur(18px); }
-.mobile-menu { display: none; width: 34px; height: 34px; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); }
+.mobile-menu { display: none; width: 34px; height: 34px; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); }
+.mobile-menu:hover { color: var(--foreground); background: var(--surface-soft); }
 .search-box { width: min(430px, 48vw); height: 35px; display: flex; align-items: center; gap: 9px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--muted); box-shadow: 0 1px 2px rgba(0,0,0,.02); }
 .search-box:focus-within { border-color: var(--border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent); }
 .search-box input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--foreground); background: transparent; font-size: 12px; }
@@ -207,7 +208,8 @@ button { color: inherit; }
 .empty-list strong, .reader-empty strong { color: var(--foreground); }
 .empty-list span, .reader-empty span { font-size: 9px; }
 .pagination { height: 43px; display: flex; align-items: center; justify-content: center; gap: 11px; flex: none; border-top: 1px solid var(--border); }
-.pagination button { width: 27px; height: 27px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); }
+.pagination button { width: 27px; height: 27px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.pagination button:hover:not(:disabled) { color: var(--foreground); background: var(--surface-soft); }
 .pagination span { color: var(--muted); font-size: 9px; }
 .reader-column { min-width: 0; display: flex; flex-direction: column; background: var(--surface); }
 .reader-illustration { width: 72px; height: 62px; display: grid; place-items: center; margin-bottom: 9px; }
