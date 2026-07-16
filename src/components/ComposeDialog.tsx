@@ -1,21 +1,21 @@
 import { useEffect, useState } from "react";
 import { Send, UserRound } from "lucide-react";
-import { api, type Account } from "../api";
+import { type Account } from "../api";
 import { Modal } from "./Modal";
 import { useI18n } from "../i18n";
 
 export function ComposeDialog({
   open,
   onClose,
+  onSend,
   accounts,
   initialAccountId,
-  notify,
 }: {
   open: boolean;
   onClose: () => void;
+  onSend: (draft: { accountId: number; to: string; cc: string; subject: string; text: string }) => void;
   accounts: Account[];
   initialAccountId: number | null;
-  notify: (message: string, type?: "success" | "error") => void;
 }) {
   const { t } = useI18n();
   const [accountId, setAccountId] = useState<number | null>(initialAccountId);
@@ -23,29 +23,16 @@ export function ComposeDialog({
   const [cc, setCc] = useState("");
   const [subject, setSubject] = useState("");
   const [text, setText] = useState("");
-  const [sending, setSending] = useState(false);
 
   useEffect(() => setAccountId(initialAccountId), [initialAccountId, open]);
 
-  const send = async () => {
+  const send = () => {
     if (!accountId) return;
-    setSending(true);
-    try {
-      await api(`/api/accounts/${accountId}/send`, {
-        method: "POST",
-        body: JSON.stringify({ to, cc, subject, text }),
-      });
-      notify("邮件已发送");
-      setTo("");
-      setCc("");
-      setSubject("");
-      setText("");
-      onClose();
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "发送失败", "error");
-    } finally {
-      setSending(false);
-    }
+    onSend({ accountId, to: to.trim(), cc: cc.trim(), subject: subject.trim(), text });
+    setTo("");
+    setCc("");
+    setSubject("");
+    setText("");
   };
 
   return (
@@ -94,10 +81,10 @@ export function ComposeDialog({
           <button className="button secondary" onClick={onClose}>{t("保存草稿")}</button>
           <button
             className="button primary"
-            disabled={!accountId || !to.trim() || !text.trim() || sending}
+            disabled={!accountId || !to.trim() || !text.trim()}
             onClick={send}
           >
-            <Send size={16} /> {sending ? t("发送中…") : t("发送邮件")}
+            <Send size={16} /> {t("发送邮件")}
           </button>
         </div>
       </footer>

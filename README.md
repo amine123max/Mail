@@ -141,6 +141,25 @@ Guest mode is intended for temporary or device-local receiving workflows:
 - Signing in or registering transfers guest accounts into the user's private namespace and invalidates the old guest session.
 - Explicit sign-out deletes the guest cache immediately.
 
+## Browser Routes
+
+Mail exposes stable English browser paths and supports direct access, refresh, and browser back/forward navigation:
+
+| Path | View |
+| --- | --- |
+| `/mail/inbox` | Inbox |
+| `/mail/sent` | Sent mail |
+| `/mail/drafts` | Drafts |
+| `/mail/archive` | Archive |
+| `/mail/trash` | Trash |
+| `/mail/sendmails` | Compose mail |
+| `/mail/accounts` | Mailbox accounts |
+| `/mail/import` | Account import |
+| `/mail/oauth` | Microsoft authorization |
+| `/mail/settings` | Settings |
+
+The legacy `/mail/` entry point remains available and opens the inbox. When Mail is deployed at the domain root, the same routes are available without the `/mail` prefix.
+
 ## Production Deployment
 
 Create a `.env` file from the template and provide strong secrets:

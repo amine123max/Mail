@@ -47,11 +47,30 @@ import { ComposeDialog } from "./components/ComposeDialog";
 import { ImportDialog } from "./components/ImportDialog";
 import { OAuthDialog } from "./components/OAuthDialog";
 import { useI18n } from "./i18n";
+import {
+  mailPath,
+  parseMailPath,
+  routeForSegment,
+  type FolderRoute,
+  type MailRoute,
+  type MailRouteSegment,
+  type PageRoute,
+} from "./routes";
 
-type Page = "inbox" | "accounts" | "settings";
 type Toast = { id: number; message: string; type: "success" | "error" };
 type CurrentUser = { username: string; administrator: boolean };
+type PendingSend = {
+  id: string;
+  accountId: number;
+  from: string;
+  to: string;
+  subject: string;
+  createdAt: string;
+  status: "sending" | "failed";
+  error?: string;
+};
 const brandLogoUrl = `${import.meta.env.BASE_URL}paper-plane-logo.png`;
+const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 const avatarGradients = [
   "linear-gradient(145deg, #7c3aed, #3b0764)",
   "linear-gradient(145deg, #2563eb, #172554)",
@@ -68,24 +87,27 @@ function avatarGradient(seed: string) {
 }
 
 const folderDefinitions = [
-  { specialUse: "\\Inbox", fallback: "INBOX", label: "收件箱", icon: Inbox },
-  { specialUse: "\\Sent", fallback: "Sent", label: "已发送", icon: Send },
-  { specialUse: "\\Drafts", fallback: "Drafts", label: "草稿", icon: FilePenLine },
-  { specialUse: "\\Archive", fallback: "Archive", label: "归档", icon: Archive },
-  { specialUse: "\\Trash", fallback: "Deleted", label: "已删除", icon: Trash2 },
+  { route: "inbox" as FolderRoute, specialUse: "\\Inbox", fallback: "INBOX", label: "收件箱", icon: Inbox },
+  { route: "sent" as FolderRoute, specialUse: "\\Sent", fallback: "Sent", label: "已发送", icon: Send },
+  { route: "drafts" as FolderRoute, specialUse: "\\Drafts", fallback: "Drafts", label: "草稿", icon: FilePenLine },
+  { route: "archive" as FolderRoute, specialUse: "\\Archive", fallback: "Archive", label: "归档", icon: Archive },
+  { route: "trash" as FolderRoute, specialUse: "\\Trash", fallback: "Deleted", label: "已删除", icon: Trash2 },
 ];
 
 function App() {
+  const initialRoute = useMemo(() => parseMailPath(window.location.pathname, appBasePath), []);
   const { language, setLanguage, t } = useI18n();
   const [authState, setAuthState] = useState<"checking" | "setup" | "signedOut" | "guest" | "authenticated">("checking");
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
-  const [page, setPage] = useState<Page>("inbox");
+  const [page, setPage] = useState<PageRoute>(initialRoute.page);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
   const [folders, setFolders] = useState<MailFolder[]>([]);
-  const [selectedFolder, setSelectedFolder] = useState("INBOX");
+  const [selectedFolderRoute, setSelectedFolderRoute] = useState<FolderRoute>(initialRoute.folder || "inbox");
   const [messages, setMessages] = useState<MessageSummary[]>([]);
   const [messageTotal, setMessageTotal] = useState(0);
+  const [messageReloadVersion, setMessageReloadVersion] = useState(0);
+  const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
   const [selectedMessage, setSelectedMessage] = useState<MessageDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [messageLoading, setMessageLoading] = useState(false);
@@ -95,9 +117,9 @@ function App() {
   const [accountSearch, setAccountSearch] = useState("");
   const [accountsCollapsed, setAccountsCollapsed] = useState(false);
   const [mailPage, setMailPage] = useState(1);
-  const [importOpen, setImportOpen] = useState(false);
-  const [composeOpen, setComposeOpen] = useState(false);
-  const [oauthOpen, setOauthOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(initialRoute.dialog === "import");
+  const [composeOpen, setComposeOpen] = useState(initialRoute.dialog === "compose");
+  const [oauthOpen, setOauthOpen] = useState(initialRoute.dialog === "oauth");
   const [oauthAccount, setOauthAccount] = useState<Account | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -108,11 +130,37 @@ function App() {
   });
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) || null;
+  const visibleFolders = useMemo(() => folderDefinitions.map((definition) => {
+    const actual = folders.find((folder) => folder.specialUse === definition.specialUse)
+      || folders.find((folder) => folder.path.toLowerCase() === definition.fallback.toLowerCase());
+    return { ...definition, path: actual?.path || definition.fallback, available: Boolean(actual) || definition.specialUse === "\\Inbox" };
+  }), [folders]);
+  const selectedFolder = visibleFolders.find((folder) => folder.route === selectedFolderRoute)?.path || "INBOX";
   const filteredAccounts = useMemo(() => {
     const query = accountSearch.trim().toLocaleLowerCase();
     if (!query) return accounts;
     return accounts.filter((account) => `${account.remark || ""}\n${account.email}`.toLocaleLowerCase().includes(query));
   }, [accountSearch, accounts]);
+
+  const applyMailRoute = useCallback((route: MailRoute) => {
+    setPage(route.page);
+    if (route.folder) {
+      setSelectedFolderRoute(route.folder);
+      setMailPage(1);
+    }
+    setComposeOpen(route.dialog === "compose");
+    setImportOpen(route.dialog === "import");
+    setOauthOpen(route.dialog === "oauth");
+    setSelectedMessage(null);
+    setMobileNavOpen(false);
+  }, []);
+
+  const navigateTo = useCallback((segment: MailRouteSegment, options?: { replace?: boolean }) => {
+    const route = routeForSegment(segment);
+    const path = mailPath(route.segment, appBasePath);
+    window.history[options?.replace ? "replaceState" : "pushState"]({ mailRoute: route.segment }, "", path);
+    applyMailRoute(route);
+  }, [applyMailRoute]);
 
   const notify = useCallback((message: string, type: "success" | "error" = "success") => {
     const id = Date.now() + Math.random();
@@ -130,6 +178,19 @@ function App() {
   useEffect(() => {
     localStorage.setItem("mail-list-font-scale", String(mailFontScale));
   }, [mailFontScale]);
+
+  useEffect(() => {
+    const route = parseMailPath(window.location.pathname, appBasePath);
+    if (route.known) {
+      window.history.replaceState({ mailRoute: route.segment }, "", window.location.href);
+    } else {
+      window.history.replaceState({ mailRoute: "" }, "", mailPath("", appBasePath));
+      applyMailRoute(routeForSegment(""));
+    }
+    const handlePopState = () => applyMailRoute(parseMailPath(window.location.pathname, appBasePath));
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [applyMailRoute]);
 
   useEffect(() => {
     api<{ authenticated: boolean; guest: boolean; setupRequired: boolean; username: string | null; administrator: boolean }>("/api/auth/status")
@@ -158,17 +219,20 @@ function App() {
   }, [authState, loadAccounts]);
 
   useEffect(() => {
+    if (oauthOpen && !oauthAccount && selectedAccount) setOauthAccount(selectedAccount);
+  }, [oauthAccount, oauthOpen, selectedAccount]);
+
+  useEffect(() => {
     if (!selectedAccountId) {
       setFolders([]);
       return;
     }
     let cancelled = false;
+    setFolders([]);
     api<{ folders: MailFolder[] }>(`/api/accounts/${selectedAccountId}/folders`)
       .then((result) => {
         if (cancelled) return;
         setFolders(result.folders);
-        const inbox = result.folders.find((folder) => folder.specialUse === "\\Inbox");
-        if (inbox) setSelectedFolder(inbox.path);
       })
       .catch((error) => {
         if (!cancelled) notify(error instanceof Error ? error.message : "无法读取文件夹", "error");
@@ -201,7 +265,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [activeSearch, mailPage, notify, page, selectedAccountId, selectedFolder]);
+  }, [activeSearch, mailPage, messageReloadVersion, notify, page, selectedAccountId, selectedFolder]);
 
   useEffect(() => void loadMessages(), [loadMessages]);
 
@@ -222,22 +286,42 @@ function App() {
     }
   };
 
-  const visibleFolders = useMemo(() => folderDefinitions.map((definition) => {
-    const actual = folders.find((folder) => folder.specialUse === definition.specialUse)
-      || folders.find((folder) => folder.path.toLowerCase() === definition.fallback.toLowerCase());
-    return { ...definition, path: actual?.path || definition.fallback, available: Boolean(actual) || definition.specialUse === "\\Inbox" };
-  }), [folders]);
-
-  const navigate = (next: Page) => {
-    setPage(next);
-    setMobileNavOpen(false);
+  const sendMailInBackground = async (draft: { accountId: number; to: string; cc: string; subject: string; text: string }) => {
+    const account = accounts.find((item) => item.id === draft.accountId);
+    if (!account) {
+      notify("邮箱账号不存在", "error");
+      return;
+    }
+    const pending: PendingSend = {
+      id: `${Date.now()}-${Math.random()}`,
+      accountId: draft.accountId,
+      from: account.email,
+      to: draft.to,
+      subject: draft.subject,
+      createdAt: new Date().toISOString(),
+      status: "sending",
+    };
+    setPendingSends((current) => [pending, ...current]);
+    setSelectedAccountId(draft.accountId);
+    navigateTo("sent", { replace: true });
+    try {
+      await api(`/api/accounts/${draft.accountId}/send`, {
+        method: "POST",
+        body: JSON.stringify({ to: draft.to, cc: draft.cc, subject: draft.subject, text: draft.text }),
+      });
+      setPendingSends((current) => current.filter((item) => item.id !== pending.id));
+      setMessageReloadVersion((value) => value + 1);
+      notify("邮件已发送");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "发送失败";
+      setPendingSends((current) => current.map((item) => item.id === pending.id ? { ...item, status: "failed", error: message } : item));
+      notify(message, "error");
+    }
   };
 
   const openFolder = (folder: (typeof visibleFolders)[number]) => {
     if (!folder.available) return;
-    setSelectedFolder(folder.path);
-    setMailPage(1);
-    navigate("inbox");
+    navigateTo(folder.route);
   };
 
   if (authState === "checking") {
@@ -255,7 +339,7 @@ function App() {
         <span>Mail</span>
         <button className="mobile-close" onClick={() => setMobileNavOpen(false)}><X size={18} /></button>
       </div>
-      <button className="compose-button" onClick={() => setComposeOpen(true)} disabled={!accounts.length || authState === "guest"} title={authState === "guest" ? t("游客模式仅支持收件") : ""}>
+      <button className="compose-button" onClick={() => navigateTo("sendmails")} disabled={!accounts.length || authState === "guest"} title={authState === "guest" ? t("游客模式仅支持收件") : ""}>
         <Plus size={18} /> {t("写邮件")}
       </button>
       <div className="sidebar-scroll">
@@ -263,7 +347,7 @@ function App() {
           <span className="nav-label">{t("邮件")}</span>
           {visibleFolders.map((folder) => {
             const Icon = folder.icon;
-            const isActive = page === "inbox" && selectedFolder === folder.path;
+            const isActive = page === "inbox" && selectedFolderRoute === folder.route;
             return (
               <button key={folder.label} className={isActive ? "active" : ""} disabled={!folder.available} onClick={() => openFolder(folder)}>
                 <Icon size={18} /> {t(folder.label)}
@@ -272,13 +356,13 @@ function App() {
             );
           })}
           <span className="nav-label nav-label-spaced">{t("管理")}</span>
-          <button className={page === "accounts" ? "active" : ""} onClick={() => navigate("accounts")}>
+          <button className={page === "accounts" ? "active" : ""} onClick={() => navigateTo("accounts")}>
             <Users size={18} /> {t("账号管理")}
           </button>
-          <button onClick={() => setImportOpen(true)}><Plus size={18} /> {t("导入账号")}</button>
-          <button onClick={() => { setOauthAccount(selectedAccount); setOauthOpen(true); }}><KeyRound size={18} /> {t("微软授权")}</button>
+          <button onClick={() => navigateTo("import")}><Plus size={18} /> {t("导入账号")}</button>
+          <button onClick={() => { setOauthAccount(selectedAccount); navigateTo("oauth"); }}><KeyRound size={18} /> {t("微软授权")}</button>
           <span className="nav-label nav-label-spaced">{t("系统")}</span>
-          <button className={page === "settings" ? "active" : ""} onClick={() => navigate("settings")}>
+          <button className={page === "settings" ? "active" : ""} onClick={() => navigateTo("settings")}>
             <Settings size={18} /> {t("系统设置")}
           </button>
           <div className="side-language">
@@ -308,7 +392,7 @@ function App() {
               >
                 {accountSearchOpen ? <X size={14} /> : <Search size={14} />}
               </button>
-              <button onClick={() => setImportOpen(true)} aria-label={t("导入账号")} title={t("导入账号")}><Plus size={14} /></button>
+              <button onClick={() => navigateTo("import")} aria-label={t("导入账号")} title={t("导入账号")}><Plus size={14} /></button>
               <button
                 onClick={() => {
                   setAccountsCollapsed((collapsed) => {
@@ -353,7 +437,7 @@ function App() {
             <button
               key={account.id}
               className={account.id === selectedAccountId ? "account-mini active" : "account-mini"}
-              onClick={() => { setSelectedAccountId(account.id); navigate("inbox"); }}
+              onClick={() => { setSelectedAccountId(account.id); navigateTo("inbox"); }}
             >
               <span className="mini-avatar">{account.email.slice(0, 1).toUpperCase()}</span>
               <span><strong>{account.remark || account.email.split("@")[0]}</strong><small>{account.email}</small></span>
@@ -401,6 +485,7 @@ function App() {
                 setSelectedAccountId(null);
                 setCurrentUser(null);
                 setAuthState("signedOut");
+                navigateTo("", { replace: true });
               }}
             ><LogOut size={14} /></button>
           </div>
@@ -415,10 +500,11 @@ function App() {
               loading={loading}
               detailLoading={messageLoading}
               selectedMessage={selectedMessage}
+              pendingSends={selectedFolderRoute === "sent" && selectedAccountId ? pendingSends.filter((item) => item.accountId === selectedAccountId) : []}
               closeMessage={() => setSelectedMessage(null)}
               openMessage={openMessage}
               reload={loadMessages}
-              openImport={() => setImportOpen(true)}
+              openImport={() => navigateTo("import")}
               fontScale={mailFontScale}
               setFontScale={setMailFontScale}
               page={mailPage}
@@ -428,26 +514,26 @@ function App() {
           {page === "accounts" && (
             <AccountsPage
               accounts={accounts}
-              openImport={() => setImportOpen(true)}
+              openImport={() => navigateTo("import")}
               notify={notify}
               reload={loadAccounts}
-              authorize={(account) => { setOauthAccount(account); setOauthOpen(true); }}
+              authorize={(account) => { setOauthAccount(account); navigateTo("oauth"); }}
             />
           )}
           {page === "settings" && (
-            <SettingsPage authorize={() => { setOauthAccount(selectedAccount); setOauthOpen(true); }} />
+            <SettingsPage authorize={() => { setOauthAccount(selectedAccount); navigateTo("oauth"); }} />
           )}
         </main>
       </div>
 
       <ImportDialog
         open={importOpen}
-        onClose={() => setImportOpen(false)}
+        onClose={() => navigateTo("accounts", { replace: true })}
         notify={notify}
         onImported={(next) => { setAccounts(next); setSelectedAccountId((current) => current || next[0]?.id || null); }}
       />
-      <ComposeDialog open={composeOpen} onClose={() => setComposeOpen(false)} accounts={accounts} initialAccountId={selectedAccountId} notify={notify} />
-      <OAuthDialog open={oauthOpen} onClose={() => setOauthOpen(false)} account={oauthAccount} notify={notify} />
+      <ComposeDialog open={composeOpen} onClose={() => navigateTo("inbox", { replace: true })} onSend={sendMailInBackground} accounts={accounts} initialAccountId={selectedAccountId} />
+      <OAuthDialog open={oauthOpen} onClose={() => navigateTo("settings", { replace: true })} account={oauthAccount} notify={notify} />
 
       <div className="toast-stack">
         {toasts.map((toast) => (
@@ -583,6 +669,7 @@ function InboxPage(props: {
   loading: boolean;
   detailLoading: boolean;
   selectedMessage: MessageDetail | null;
+  pendingSends: PendingSend[];
   closeMessage: () => void;
   openMessage: (message: MessageSummary) => void;
   reload: () => void;
@@ -598,10 +685,21 @@ function InboxPage(props: {
   return (
     <section className="mail-panel" style={{ "--mail-primary-size": `${(10.5 * props.fontScale).toFixed(1)}px`, "--mail-time-size": `${(8.5 * props.fontScale).toFixed(1)}px`, "--mail-secondary-size": `${(9 * props.fontScale).toFixed(1)}px`, "--mail-row-height": `${Math.round(89 * props.fontScale)}px`, "--mail-row-padding": `${Math.round(13 * props.fontScale)}px` } as React.CSSProperties}>
         <div className="message-column">
-          <div className="column-head"><div className="column-title"><strong>{t("邮件列表")}</strong><span>{props.total} {t("封邮件")}</span></div><div className="column-actions"><button disabled={props.fontScale <= 0.9} onClick={() => props.setFontScale((value) => Math.max(0.9, Number((value - 0.1).toFixed(1))))} aria-label={t("减小邮件列表字号")}><Minus size={15} /></button><span className="font-scale-label">{Math.round(props.fontScale * 100)}%</span><button disabled={props.fontScale >= 1.4} onClick={() => props.setFontScale((value) => Math.min(1.4, Number((value + 0.1).toFixed(1))))} aria-label={t("增大邮件列表字号")}><Plus size={15} /></button><button onClick={props.reload} aria-label={t("同步")}><RefreshCw size={16} /></button></div></div>
+          <div className="column-head"><div className="column-title"><strong>{t("邮件列表")}</strong><span>{props.total + props.pendingSends.length} {t("封邮件")}</span></div><div className="column-actions"><button disabled={props.fontScale <= 0.9} onClick={() => props.setFontScale((value) => Math.max(0.9, Number((value - 0.1).toFixed(1))))} aria-label={t("减小邮件列表字号")}><Minus size={15} /></button><span className="font-scale-label">{Math.round(props.fontScale * 100)}%</span><button disabled={props.fontScale >= 1.4} onClick={() => props.setFontScale((value) => Math.min(1.4, Number((value + 0.1).toFixed(1))))} aria-label={t("增大邮件列表字号")}><Plus size={15} /></button><button onClick={props.reload} aria-label={t("同步")}><RefreshCw size={16} /></button></div></div>
           <div className="message-list">
+            {props.pendingSends.map((pending) => (
+              <div className={`message-row pending-send-row ${pending.status}`} key={pending.id}>
+                <span className="sender-avatar">{initials(pending.from)}</span>
+                <span className="message-copy">
+                  <span className="message-meta"><strong>{pending.from}</strong><time>{formatDate(pending.createdAt, false, language === "en" ? "en-US" : "zh-CN")}</time></span>
+                  <span className="message-subject">{pending.subject || t("邮件主题")}</span>
+                  <small>{pending.status === "sending" ? t("邮件正在后台发送…") : `${t("发送失败")}：${pending.error || t("发送失败")}`}</small>
+                </span>
+                <i className="pending-send-progress" aria-hidden="true" />
+              </div>
+            ))}
             {props.loading && <div className="loading-state"><RefreshCw className="spin" size={20} /> {t("正在同步邮件…")}</div>}
-            {!props.loading && !props.messages.length && <div className="empty-list"><img className="state-plane-logo small" src={brandLogoUrl} alt="" /><strong>{t("这里还没有邮件")}</strong><span>{t("尝试同步或切换其他文件夹")}</span></div>}
+            {!props.loading && !props.messages.length && !props.pendingSends.length && <div className="empty-list"><img className="state-plane-logo small" src={brandLogoUrl} alt="" /><strong>{t("这里还没有邮件")}</strong><span>{t("尝试同步或切换其他文件夹")}</span></div>}
             {!props.loading && props.messages.map((message) => (
               <button
                 key={message.uid}
