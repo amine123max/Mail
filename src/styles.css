@@ -75,8 +75,8 @@ button { color: inherit; }
 .side-nav > button em { min-width: 21px; height: 19px; display: grid; place-items: center; margin-left: auto; border-radius: 20px; color: #fff; background: #17171a; font-size: 10px; font-style: normal; }
 .side-language { height: 38px; display: flex; align-items: center; gap: 11px; padding: 0 10px; color: var(--muted); font-size: 13px; }
 .side-language span { flex: 1; }
-.language-toggle { height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 11px; border: 1px solid var(--border); border-radius: 7px; color: var(--foreground); background: var(--surface); font-size: 11px; font-weight: 600; }
-.language-toggle:hover { border-color: var(--border-strong); background: var(--surface-soft); }
+.language-toggle { height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 11px; border: 0; border-radius: 7px; color: var(--foreground); background: transparent; font-size: 11px; font-weight: 600; }
+.language-toggle:hover { background: var(--surface-soft); }
 .language-toggle.compact { height: 29px; min-width: 42px; padding: 0 8px; font-size: 10px; }
 .dark .side-nav > button em { color: #111; background: #f5f5f5; }
 .side-accounts { margin-top: 27px; min-height: 0; overflow: hidden; }
@@ -86,7 +86,7 @@ button { color: inherit; }
 .side-section-title button:hover { background: var(--surface-soft); }
 .account-mini { position: relative; width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 7px; border-radius: 7px; text-align: left; }
 .account-mini:hover, .account-mini.active { background: var(--surface-soft); }
-.mini-avatar { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--foreground); font-size: 11px; font-weight: 700; }
+.mini-avatar { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--foreground); font-size: 11px; font-weight: 700; }
 .account-mini > span:nth-child(2) { min-width: 0; display: grid; gap: 1px; }
 .account-mini strong, .account-mini small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-mini strong { max-width: 145px; font-size: 11px; font-weight: 600; }
@@ -106,8 +106,8 @@ button { color: inherit; }
 .search-box input::placeholder { color: var(--muted-2); }
 .search-box kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-soft); color: var(--muted-2); font: 9px monospace; }
 .top-actions { display: flex; align-items: center; gap: 7px; margin-left: auto; }
-.guest-badge { height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid var(--border); border-radius: 20px; color: var(--muted); background: var(--surface); font-size: 10px; }
-.icon-button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--muted); }
+.guest-badge { height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 0; border-radius: 20px; color: var(--muted); background: transparent; font-size: 10px; }
+.icon-button { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); }
 .icon-button:hover { color: var(--foreground); background: var(--surface-soft); }
 .notification-button { position: relative; }
 .notification-button i { position: absolute; top: 7px; right: 7px; width: 5px; height: 5px; border: 1px solid var(--surface); border-radius: 50%; background: #e5484d; }
@@ -157,7 +157,10 @@ button { color: inherit; }
 .column-head > div { display: grid; gap: 1px; }
 .column-head strong { font-size: 11px; }
 .column-head span { color: var(--muted); font-size: 9px; }
-.column-head button, .reader-tools button { width: 29px; height: 29px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--muted); }
+.column-head button, .reader-tools button { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); }
+.column-head button { border: 1px solid var(--border); background: var(--surface); }
+.reader-tools button { border: 0; background: transparent; }
+.reader-tools button:hover { color: var(--foreground); background: var(--surface-soft); }
 .message-list { min-height: 0; flex: 1; overflow: auto; }
 .message-row { position: relative; width: 100%; min-height: 89px; display: flex; align-items: flex-start; gap: 10px; padding: 13px 13px; border: 0; border-bottom: 1px solid var(--border); background: transparent; text-align: left; }
 .message-row:hover { background: var(--surface-soft); }
