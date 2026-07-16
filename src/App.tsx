@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Archive,
   ArrowLeft,
@@ -16,6 +16,8 @@ import {
   Languages,
   LockKeyhole,
   LogOut,
+  Mail,
+  MailOpen,
   Menu,
   Minus,
   Moon,
@@ -36,6 +38,7 @@ import {
 import {
   api,
   type Account,
+  type Announcement,
   ApiError,
   formatDate,
   initials,
@@ -43,6 +46,7 @@ import {
   type MessageDetail,
   type MessageSummary,
 } from "./api";
+import { AnnouncementDialog } from "./components/AnnouncementDialog";
 import { ComposeDialog } from "./components/ComposeDialog";
 import { ImportDialog } from "./components/ImportDialog";
 import { OAuthDialog } from "./components/OAuthDialog";
@@ -69,6 +73,15 @@ type PendingSend = {
   status: "sending" | "failed";
   error?: string;
 };
+type MessageMoveConfirmation = {
+  accountId: number;
+  uid: number | string;
+  subject: string;
+  sourceFolder: string;
+  sourceRoute: FolderRoute;
+  targetFolder: string;
+  targetRoute: "archive" | "trash";
+};
 const brandLogoUrl = `${import.meta.env.BASE_URL}paper-plane-logo.png`;
 const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 const avatarGradients = [
@@ -84,6 +97,30 @@ const avatarGradients = [
 function avatarGradient(seed: string) {
   const hash = [...seed].reduce((value, character) => ((value * 31) + character.charCodeAt(0)) >>> 0, 0);
   return avatarGradients[hash % avatarGradients.length];
+}
+
+function mailboxAddresses(value: string): string {
+  const bracketed = Array.from(value.matchAll(/<([^<>\s]+@[^<>\s]+)>/g), (match) => match[1]);
+  if (bracketed.length) return Array.from(new Set(bracketed)).join(", ");
+  const plain = value.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi);
+  return plain?.length ? Array.from(new Set(plain)).join(", ") : value;
+}
+
+function messageListDate(value: string, locale: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const now = new Date();
+  const sameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate();
+  if (sameDay) {
+    return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(date);
+  }
+  return new Intl.DateTimeFormat(locale, {
+    ...(date.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+    month: "short",
+    day: "numeric",
+  }).format(date);
 }
 
 const folderDefinitions = [
@@ -108,9 +145,16 @@ function App() {
   const [messageTotal, setMessageTotal] = useState(0);
   const [messageReloadVersion, setMessageReloadVersion] = useState(0);
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
+  const [announcementOpen, setAnnouncementOpen] = useState(false);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [announcementUnread, setAnnouncementUnread] = useState(0);
+  const [announcementsLoading, setAnnouncementsLoading] = useState(false);
+  const [announcementPublishing, setAnnouncementPublishing] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<MessageDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [messageLoading, setMessageLoading] = useState(false);
+  const [messageActionLoading, setMessageActionLoading] = useState(false);
+  const [messageMoveConfirmation, setMessageMoveConfirmation] = useState<MessageMoveConfirmation | null>(null);
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
   const [accountSearchOpen, setAccountSearchOpen] = useState(false);
@@ -122,6 +166,7 @@ function App() {
   const [oauthOpen, setOauthOpen] = useState(initialRoute.dialog === "oauth");
   const [oauthAccount, setOauthAccount] = useState<Account | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobileNavClosing, setMobileNavClosing] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [dark, setDark] = useState(() => localStorage.getItem("mail-theme") === "dark");
   const [mailFontScale, setMailFontScale] = useState(() => {
@@ -142,6 +187,10 @@ function App() {
     return accounts.filter((account) => `${account.remark || ""}\n${account.email}`.toLocaleLowerCase().includes(query));
   }, [accountSearch, accounts]);
 
+  const closeMobileNav = useCallback(() => {
+    if (mobileNavOpen) setMobileNavClosing(true);
+  }, [mobileNavOpen]);
+
   const applyMailRoute = useCallback((route: MailRoute) => {
     setPage(route.page);
     if (route.folder) {
@@ -152,8 +201,8 @@ function App() {
     setImportOpen(route.dialog === "import");
     setOauthOpen(route.dialog === "oauth");
     setSelectedMessage(null);
-    setMobileNavOpen(false);
-  }, []);
+    closeMobileNav();
+  }, [closeMobileNav]);
 
   const navigateTo = useCallback((segment: MailRouteSegment, options?: { replace?: boolean }) => {
     const route = routeForSegment(segment);
@@ -169,6 +218,54 @@ function App() {
       setToasts((current) => current.filter((toast) => toast.id !== id));
     }, 4500);
   }, []);
+
+  const loadAnnouncements = useCallback(async (silent = false) => {
+    if (!silent) setAnnouncementsLoading(true);
+    try {
+      const result = await api<{ announcements: Announcement[]; unreadCount: number }>("/api/announcements");
+      setAnnouncements(result.announcements);
+      setAnnouncementUnread(result.unreadCount);
+      return result;
+    } catch (error) {
+      if (!silent) notify(error instanceof Error ? error.message : "无法读取公告", "error");
+      return null;
+    } finally {
+      if (!silent) setAnnouncementsLoading(false);
+    }
+  }, [notify]);
+
+  const openAnnouncements = useCallback(() => {
+    setAnnouncementOpen(true);
+    void (async () => {
+      const result = await loadAnnouncements();
+      if (!result) return;
+      await api("/api/announcements/read", { method: "POST" }).catch(() => undefined);
+      setAnnouncementUnread(0);
+      setAnnouncements((current) => current.map((announcement) => ({ ...announcement, read: true })));
+    })();
+  }, [loadAnnouncements]);
+
+  const publishAnnouncement = useCallback(async (title: string, content: string) => {
+    setAnnouncementPublishing(true);
+    try {
+      await api("/api/announcements", {
+        method: "POST",
+        body: JSON.stringify({ title, content }),
+      });
+      const result = await loadAnnouncements(true);
+      if (result) {
+        await api("/api/announcements/read", { method: "POST" }).catch(() => undefined);
+        setAnnouncementUnread(0);
+        setAnnouncements((current) => current.map((announcement) => ({ ...announcement, read: true })));
+      }
+      notify("公告已发布");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "公告发布失败", "error");
+      throw error;
+    } finally {
+      setAnnouncementPublishing(false);
+    }
+  }, [loadAnnouncements, notify]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -217,6 +314,17 @@ function App() {
   useEffect(() => {
     if (authState === "authenticated" || authState === "guest") void loadAccounts();
   }, [authState, loadAccounts]);
+
+  useEffect(() => {
+    if (authState !== "authenticated") {
+      setAnnouncements([]);
+      setAnnouncementUnread(0);
+      return;
+    }
+    void loadAnnouncements(true);
+    const timer = window.setInterval(() => void loadAnnouncements(true), 60_000);
+    return () => window.clearInterval(timer);
+  }, [authState, loadAnnouncements]);
 
   useEffect(() => {
     if (oauthOpen && !oauthAccount && selectedAccount) setOauthAccount(selectedAccount);
@@ -286,6 +394,67 @@ function App() {
     }
   };
 
+  const requestMessageMove = (uid: number | string, subject: string, targetRoute: "archive" | "trash") => {
+    if (!selectedAccountId) return;
+    const target = visibleFolders.find((folder) => folder.route === targetRoute);
+    if (!target?.available) {
+      notify(targetRoute === "archive" ? "归档文件夹不可用" : "已删除文件夹不可用", "error");
+      return;
+    }
+    setMessageMoveConfirmation({
+      accountId: selectedAccountId,
+      uid,
+      subject,
+      sourceFolder: selectedFolder,
+      sourceRoute: selectedFolderRoute,
+      targetFolder: target.path,
+      targetRoute,
+    });
+  };
+
+  const confirmMessageMove = async () => {
+    const action = messageMoveConfirmation;
+    if (!action) return;
+    setMessageActionLoading(true);
+    try {
+      await api(`/api/accounts/${action.accountId}/messages/${encodeURIComponent(String(action.uid))}/move`, {
+        method: "POST",
+        body: JSON.stringify({ folder: action.sourceFolder, targetFolder: action.targetFolder }),
+      });
+      if (selectedAccountId === action.accountId && selectedFolder === action.sourceFolder) {
+        setMessages((current) => current.filter((message) => message.uid !== action.uid));
+        setMessageTotal((total) => Math.max(0, total - 1));
+        setSelectedMessage((current) => current?.uid === action.uid ? null : current);
+        setMessageReloadVersion((value) => value + 1);
+      }
+      setMessageMoveConfirmation(null);
+      notify(action.targetRoute === "archive" ? "邮件已归档" : action.sourceRoute === "trash" ? "邮件已永久删除" : "邮件已移至已删除");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "邮件操作失败", "error");
+    } finally {
+      setMessageActionLoading(false);
+    }
+  };
+
+  const toggleSelectedMessageFlag = async () => {
+    if (!selectedAccountId || !selectedMessage) return;
+    const summary = messages.find((message) => message.uid === selectedMessage.uid);
+    const flagged = !summary?.flagged;
+    setMessageActionLoading(true);
+    try {
+      await api(`/api/accounts/${selectedAccountId}/messages/${encodeURIComponent(String(selectedMessage.uid))}/flag`, {
+        method: "PATCH",
+        body: JSON.stringify({ folder: selectedFolder, flagged }),
+      });
+      setMessages((current) => current.map((message) => message.uid === selectedMessage.uid ? { ...message, flagged } : message));
+      notify(flagged ? "邮件已收藏" : "已取消收藏");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "收藏操作失败", "error");
+    } finally {
+      setMessageActionLoading(false);
+    }
+  };
+
   const sendMailInBackground = async (draft: { accountId: number; to: string; cc: string; subject: string; text: string }) => {
     const account = accounts.find((item) => item.id === draft.accountId);
     if (!account) {
@@ -337,7 +506,7 @@ function App() {
       <div className="brand-row">
         <div className="brand-mark"><img src={brandLogoUrl} alt="" /></div>
         <span>Mail</span>
-        <button className="mobile-close" onClick={() => setMobileNavOpen(false)}><X size={18} /></button>
+        <button className="mobile-close" onClick={closeMobileNav}><X size={18} /></button>
       </div>
       <button className="compose-button" onClick={() => navigateTo("sendmails")} disabled={!accounts.length || authState === "guest"} title={authState === "guest" ? t("游客模式仅支持收件") : ""}>
         <Plus size={18} /> {t("写邮件")}
@@ -362,6 +531,12 @@ function App() {
           <button onClick={() => navigateTo("import")}><Plus size={18} /> {t("导入账号")}</button>
           <button onClick={() => { setOauthAccount(selectedAccount); navigateTo("oauth"); }}><KeyRound size={18} /> {t("微软授权")}</button>
           <span className="nav-label nav-label-spaced">{t("系统")}</span>
+          {currentUser?.administrator && (
+            <button onClick={openAnnouncements}>
+              <CircleAlert size={18} /> {t("公告管理")}
+              {announcementUnread > 0 && <em>{announcementUnread}</em>}
+            </button>
+          )}
           <button className={page === "settings" ? "active" : ""} onClick={() => navigateTo("settings")}>
             <Settings size={18} /> {t("系统设置")}
           </button>
@@ -457,11 +632,23 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">{sidebar}</aside>
-      {mobileNavOpen && <div className="mobile-nav-overlay" onClick={() => setMobileNavOpen(false)}><aside onClick={(event) => event.stopPropagation()}>{sidebar}</aside></div>}
+      {mobileNavOpen && (
+        <div
+          className={`mobile-nav-overlay ${mobileNavClosing ? "closing" : ""}`}
+          onClick={closeMobileNav}
+          onAnimationEnd={(event) => {
+            if (!mobileNavClosing || event.target !== event.currentTarget) return;
+            setMobileNavOpen(false);
+            setMobileNavClosing(false);
+          }}
+        >
+          <aside onClick={(event) => event.stopPropagation()}>{sidebar}</aside>
+        </div>
+      )}
 
       <div className="workspace">
         <header className="topbar">
-          <button className="mobile-menu" onClick={() => setMobileNavOpen(true)}><Menu size={19} /></button>
+          <button className="mobile-menu" onClick={() => { setMobileNavClosing(false); setMobileNavOpen(true); }}><Menu size={19} /></button>
           <form className="search-box" onSubmit={(event) => { event.preventDefault(); setMailPage(1); setActiveSearch(search.trim()); }}>
             <Search size={16} />
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("搜索邮件主题、发件人或正文…")} />
@@ -475,7 +662,12 @@ function App() {
             <button className="icon-button" onClick={() => setDark((value) => !value)} aria-label={t("切换主题")}>
               {dark ? <Sun size={18} /> : <Moon size={18} />}
             </button>
-            <button className="icon-button notification-button" aria-label={t("通知")}><CircleAlert size={18} /><i /></button>
+            {authState === "authenticated" && (
+              <button className="icon-button notification-button" onClick={openAnnouncements} aria-label={t("公告")} title={t("公告")}>
+                <CircleAlert size={18} />
+                {announcementUnread > 0 && <i />}
+              </button>
+            )}
             <button
               className="profile-avatar profile-button"
               title={t("退出登录")}
@@ -500,9 +692,15 @@ function App() {
               loading={loading}
               detailLoading={messageLoading}
               selectedMessage={selectedMessage}
+              folderRoute={selectedFolderRoute}
+              actionLoading={messageActionLoading}
               pendingSends={selectedFolderRoute === "sent" && selectedAccountId ? pendingSends.filter((item) => item.accountId === selectedAccountId) : []}
               closeMessage={() => setSelectedMessage(null)}
               openMessage={openMessage}
+              requestMoveMessage={(message, targetRoute) => requestMessageMove(message.uid, message.subject, targetRoute)}
+              archiveMessage={() => { if (selectedMessage) requestMessageMove(selectedMessage.uid, selectedMessage.subject, "archive"); }}
+              deleteMessage={() => { if (selectedMessage) requestMessageMove(selectedMessage.uid, selectedMessage.subject, "trash"); }}
+              toggleFlag={() => void toggleSelectedMessageFlag()}
               reload={loadMessages}
               openImport={() => navigateTo("import")}
               fontScale={mailFontScale}
@@ -534,6 +732,22 @@ function App() {
       />
       <ComposeDialog open={composeOpen} onClose={() => navigateTo("inbox", { replace: true })} onSend={sendMailInBackground} accounts={accounts} initialAccountId={selectedAccountId} />
       <OAuthDialog open={oauthOpen} onClose={() => navigateTo("settings", { replace: true })} account={oauthAccount} notify={notify} />
+      <AnnouncementDialog
+        open={announcementOpen}
+        onClose={() => setAnnouncementOpen(false)}
+        announcements={announcements}
+        administrator={Boolean(currentUser?.administrator)}
+        loading={announcementsLoading}
+        publishing={announcementPublishing}
+        onRefresh={() => void loadAnnouncements()}
+        onPublish={publishAnnouncement}
+      />
+      <MessageMoveConfirmDialog
+        action={messageMoveConfirmation}
+        loading={messageActionLoading}
+        onClose={() => { if (!messageActionLoading) setMessageMoveConfirmation(null); }}
+        onConfirm={() => void confirmMessageMove()}
+      />
 
       <div className="toast-stack">
         {toasts.map((toast) => (
@@ -669,9 +883,15 @@ function InboxPage(props: {
   loading: boolean;
   detailLoading: boolean;
   selectedMessage: MessageDetail | null;
+  folderRoute: FolderRoute;
+  actionLoading: boolean;
   pendingSends: PendingSend[];
   closeMessage: () => void;
   openMessage: (message: MessageSummary) => void;
+  requestMoveMessage: (message: MessageSummary, targetRoute: "archive" | "trash") => void;
+  archiveMessage: () => void;
+  deleteMessage: () => void;
+  toggleFlag: () => void;
   reload: () => void;
   openImport: () => void;
   fontScale: number;
@@ -680,41 +900,147 @@ function InboxPage(props: {
   setPage: (value: number | ((current: number) => number)) => void;
 }) {
   const { language, t } = useI18n();
+  const gestureRef = useRef<{
+    uid: number | string;
+    startX: number;
+    startY: number;
+    activated: boolean;
+    offset: number;
+  } | null>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const suppressClickRef = useRef(false);
+  const [swipeState, setSwipeState] = useState<{ uid: number | string; offset: number } | null>(null);
+
+  const clearLongPressTimer = () => {
+    if (longPressTimerRef.current !== null) window.clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+  };
+
+  const resetSwipe = () => {
+    clearLongPressTimer();
+    gestureRef.current = null;
+    setSwipeState(null);
+  };
+
+  useEffect(() => () => clearLongPressTimer(), []);
+
+  const startSwipeGesture = (message: MessageSummary, event: React.PointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    clearLongPressTimer();
+    suppressClickRef.current = false;
+    gestureRef.current = {
+      uid: message.uid,
+      startX: event.clientX,
+      startY: event.clientY,
+      activated: false,
+      offset: 0,
+    };
+    longPressTimerRef.current = window.setTimeout(() => {
+      const gesture = gestureRef.current;
+      if (!gesture || gesture.uid !== message.uid) return;
+      gesture.activated = true;
+      setSwipeState({ uid: message.uid, offset: 0 });
+    }, 360);
+  };
+
+  const moveSwipeGesture = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const gesture = gestureRef.current;
+    if (!gesture) return;
+    const deltaX = event.clientX - gesture.startX;
+    const deltaY = event.clientY - gesture.startY;
+    if (!gesture.activated) {
+      if (Math.abs(deltaX) > 12 || Math.abs(deltaY) > 12) resetSwipe();
+      return;
+    }
+    event.preventDefault();
+    gesture.offset = Math.max(-112, Math.min(112, deltaX));
+    setSwipeState({ uid: gesture.uid, offset: gesture.offset });
+  };
+
+  const finishSwipeGesture = (message: MessageSummary) => {
+    const gesture = gestureRef.current;
+    clearLongPressTimer();
+    if (!gesture || gesture.uid !== message.uid) {
+      resetSwipe();
+      return;
+    }
+    if (gesture.activated) {
+      suppressClickRef.current = true;
+      if (gesture.offset <= -68) props.requestMoveMessage(message, "trash");
+      if (gesture.offset >= 68) props.requestMoveMessage(message, "archive");
+    }
+    resetSwipe();
+  };
+
   if (!props.accounts.length) return <EmptyMailbox openImport={props.openImport} />;
 
   return (
-    <section className="mail-panel" style={{ "--mail-primary-size": `${(10.5 * props.fontScale).toFixed(1)}px`, "--mail-time-size": `${(8.5 * props.fontScale).toFixed(1)}px`, "--mail-secondary-size": `${(9 * props.fontScale).toFixed(1)}px`, "--mail-row-height": `${Math.round(89 * props.fontScale)}px`, "--mail-row-padding": `${Math.round(13 * props.fontScale)}px` } as React.CSSProperties}>
+    <section className="mail-panel" style={{ "--mail-primary-size": `${(12.6 * props.fontScale).toFixed(1)}px`, "--mail-time-size": `${(10.8 * props.fontScale).toFixed(1)}px`, "--mail-secondary-size": `${(11.4 * props.fontScale).toFixed(1)}px`, "--mail-row-height": `${Math.round(54 * props.fontScale)}px`, "--mail-row-padding": `${Math.round(7 * props.fontScale)}px` } as React.CSSProperties}>
         <div className="message-column">
           <div className="column-head"><div className="column-title"><strong>{t("邮件列表")}</strong><span>{props.total + props.pendingSends.length} {t("封邮件")}</span></div><div className="column-actions"><button disabled={props.fontScale <= 0.9} onClick={() => props.setFontScale((value) => Math.max(0.9, Number((value - 0.1).toFixed(1))))} aria-label={t("减小邮件列表字号")}><Minus size={15} /></button><span className="font-scale-label">{Math.round(props.fontScale * 100)}%</span><button disabled={props.fontScale >= 1.4} onClick={() => props.setFontScale((value) => Math.min(1.4, Number((value + 0.1).toFixed(1))))} aria-label={t("增大邮件列表字号")}><Plus size={15} /></button><button onClick={props.reload} aria-label={t("同步")}><RefreshCw size={16} /></button></div></div>
           <div className="message-list">
             {props.pendingSends.map((pending) => (
               <div className={`message-row pending-send-row ${pending.status}`} key={pending.id}>
-                <span className="sender-avatar">{initials(pending.from)}</span>
-                <span className="message-copy">
-                  <span className="message-meta"><strong>{pending.from}</strong><time>{formatDate(pending.createdAt, false, language === "en" ? "en-US" : "zh-CN")}</time></span>
-                  <span className="message-subject">{pending.subject || t("邮件主题")}</span>
+                <span className="message-state sending" aria-label={t("发送中…")}><Send size={17} /></span>
+                <strong className="message-sender">{mailboxAddresses(pending.to)}</strong>
+                <span className="message-summary-line">
+                  <strong>{pending.subject || t("邮件主题")}</strong>
                   <small>{pending.status === "sending" ? t("发送中…") : `${t("发送失败")}：${pending.error || t("发送失败")}`}</small>
                 </span>
+                <time className="message-time">{messageListDate(pending.createdAt, language === "en" ? "en-US" : "zh-CN")}</time>
+                <Star className="row-star" size={16} />
                 <i className="pending-send-progress" aria-hidden="true" />
               </div>
             ))}
             {props.loading && <div className="loading-state"><RefreshCw className="spin" size={20} /> {t("正在同步邮件…")}</div>}
             {!props.loading && !props.messages.length && !props.pendingSends.length && <div className="empty-list"><img className="state-plane-logo small" src={brandLogoUrl} alt="" /><strong>{t("这里还没有邮件")}</strong><span>{t("尝试同步或切换其他文件夹")}</span></div>}
-            {!props.loading && props.messages.map((message) => (
-              <button
-                key={message.uid}
-                className={`message-row ${message.unread ? "unread" : ""} ${props.selectedMessage?.uid === message.uid ? "active" : ""}`}
-                onClick={() => props.openMessage(message)}
-              >
-                <span className="sender-avatar">{initials(message.from)}</span>
-                <span className="message-copy">
-                  <span className="message-meta"><strong>{message.from || t("未知发件人")}</strong><time>{formatDate(message.date, false, language === "en" ? "en-US" : "zh-CN")}</time></span>
-                  <span className="message-subject">{message.subject}</span>
-                  <small>{t("点击查看邮件正文与详细信息")}</small>
-                </span>
-                {message.flagged && <Star className="row-star" size={14} />}
-              </button>
-            ))}
+            {!props.loading && props.messages.map((message) => {
+              const activeSwipe = swipeState?.uid === message.uid ? swipeState.offset : 0;
+              const swipeProgress = Math.min(1, Math.abs(activeSwipe) / 112);
+              return (
+                <div
+                  className={`message-swipe-shell ${activeSwipe < 0 ? "dragging swiping-left" : activeSwipe > 0 ? "dragging swiping-right" : ""}`}
+                  style={activeSwipe ? { "--swipe-progress": swipeProgress, "--swipe-scale": .72 + swipeProgress * .28 } as React.CSSProperties : undefined}
+                  key={message.uid}
+                >
+                  <span className="message-swipe-action archive"><Archive size={18} /> {t("归档")}</span>
+                  <span className="message-swipe-action delete"><Trash2 size={18} /> {t("删除")}</span>
+                  <button
+                    className={`message-row ${message.unread ? "unread" : ""} ${props.selectedMessage?.uid === message.uid ? "active" : ""}`}
+                    style={activeSwipe ? { transform: `translateX(${activeSwipe}px)` } : undefined}
+                    onPointerDown={(event) => startSwipeGesture(message, event)}
+                    onPointerMove={moveSwipeGesture}
+                    onPointerUp={() => finishSwipeGesture(message)}
+                    onPointerCancel={resetSwipe}
+                    onContextMenu={(event) => event.preventDefault()}
+                    onClick={(event) => {
+                      if (suppressClickRef.current) {
+                        suppressClickRef.current = false;
+                        event.preventDefault();
+                        return;
+                      }
+                      props.openMessage(message);
+                    }}
+                  >
+                    <span className={`message-state ${message.unread ? "unread" : "read"}`} aria-label={t(message.unread ? "未读邮件" : "已读邮件")}>
+                      {message.unread ? <Mail size={17} /> : <MailOpen size={17} />}
+                    </span>
+                    <strong className="message-sender">
+                      {props.folderRoute === "sent"
+                        ? mailboxAddresses(message.to) || t("未知发件人")
+                        : message.fromEmail || mailboxAddresses(message.from) || t("未知发件人")}
+                    </strong>
+                    <span className="message-summary-line">
+                      <strong>{message.subject}</strong>
+                      {message.preview && <small>{message.preview}</small>}
+                    </span>
+                    <time className="message-time">{messageListDate(message.date, language === "en" ? "en-US" : "zh-CN")}</time>
+                    <Star className={message.flagged ? "row-star flagged" : "row-star"} size={16} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
           <div className="pagination">
             <button disabled={props.page <= 1} onClick={() => props.setPage((page) => Math.max(1, page - 1))}><ChevronLeft size={15} /></button>
@@ -726,25 +1052,119 @@ function InboxPage(props: {
         <article className="reader-column">
           {props.detailLoading && <div className="reader-empty"><RefreshCw className="spin" size={22} /><span>{t("正在打开邮件…")}</span></div>}
           {!props.detailLoading && !props.selectedMessage && <div className="reader-empty"><div className="reader-illustration"><img className="state-plane-logo" src={brandLogoUrl} alt="" /></div><strong>{t("选择一封邮件")}</strong><span>{t("邮件正文将在这里安全显示")}</span></div>}
-          {!props.detailLoading && props.selectedMessage && <MessageReader message={props.selectedMessage} onClose={props.closeMessage} />}
+          {!props.detailLoading && props.selectedMessage && (
+            <MessageReader
+              message={props.selectedMessage}
+              flagged={Boolean(props.messages.find((message) => message.uid === props.selectedMessage?.uid)?.flagged)}
+              canArchive={props.folderRoute !== "archive"}
+              actionLoading={props.actionLoading}
+              onClose={props.closeMessage}
+              onArchive={props.archiveMessage}
+              onDelete={props.deleteMessage}
+              onToggleFlag={props.toggleFlag}
+            />
+          )}
         </article>
     </section>
   );
 }
 
-function MessageReader({ message, onClose }: { message: MessageDetail; onClose: () => void }) {
+function MessageReader({
+  message,
+  flagged,
+  canArchive,
+  actionLoading,
+  onClose,
+  onArchive,
+  onDelete,
+  onToggleFlag,
+}: {
+  message: MessageDetail;
+  flagged: boolean;
+  canArchive: boolean;
+  actionLoading: boolean;
+  onClose: () => void;
+  onArchive: () => void;
+  onDelete: () => void;
+  onToggleFlag: () => void;
+}) {
   const { language, t } = useI18n();
-  const srcDoc = `<!doctype html><html lang="${language}"><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src 'none'; connect-src 'none'; media-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"><meta name="color-scheme" content="light only"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:#fff}body{color:#202124;font:14px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',Arial,sans-serif;overflow-wrap:anywhere;-webkit-text-size-adjust:100%}.mail-document{width:100%;max-width:900px;margin:0 auto;padding:34px clamp(22px,4.5vw,56px) 72px}.mail-document> :first-child{margin-top:0!important}.mail-document> :last-child{margin-bottom:0!important}img{max-width:100%!important;height:auto!important;object-fit:contain}table{max-width:100%!important}td,th{overflow-wrap:break-word}a{color:#2563eb;text-decoration-thickness:1px;text-underline-offset:2px}.mail-image-unavailable{display:inline-flex;align-items:center;max-width:100%;margin:2px 0;padding:7px 10px;border:1px solid #e5e7eb;border-radius:7px;background:#f8fafc;color:#64748b;font-size:12px;line-height:1.4}blockquote{margin-inline:0;padding-left:14px;border-left:3px solid #e5e7eb;color:#52525b}pre{margin:0;white-space:pre-wrap;font:inherit}@media(max-width:640px){.mail-document{padding:24px 16px 48px}td,th{max-width:100%!important}}</style></head><body><main class="mail-document">${message.html || `<pre>${escapeHtml(message.text)}</pre>`}</main></body></html>`;
+  const srcDoc = `<!doctype html>
+<html lang="${language}">
+<head>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src 'none'; connect-src 'none'; media-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="light only">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <style>
+    *{box-sizing:border-box;min-width:0}
+    html,body{width:100%;max-width:100%;min-height:100%;margin:0;overflow-x:hidden;background:#fff}
+    body{color:#202124;font:14px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',Arial,sans-serif;overflow-wrap:anywhere;word-break:break-word;-webkit-text-size-adjust:100%}
+    .mail-document{width:100%;max-width:900px;margin:0 auto;padding:34px clamp(22px,4.5vw,56px) 72px;overflow:hidden}
+    .mail-document *{max-width:100%!important}
+    .mail-document> :first-child{margin-top:0!important}
+    .mail-document> :last-child{margin-bottom:0!important}
+    img,svg,video,canvas{max-width:100%!important;height:auto!important;object-fit:contain}
+    table{width:100%!important;max-width:100%!important;table-layout:auto!important;border-collapse:collapse}
+    td,th{width:auto!important;max-width:100%!important;overflow-wrap:anywhere!important;word-break:break-word!important}
+    div,p,span,a,li{overflow-wrap:anywhere;word-break:break-word}
+    a{color:#2563eb;text-decoration-thickness:1px;text-underline-offset:2px}
+    pre,code{max-width:100%!important;overflow-wrap:anywhere!important;white-space:pre-wrap!important;word-break:break-word!important}
+    .mail-image-unavailable{display:inline-flex;align-items:center;max-width:100%;margin:2px 0;padding:7px 10px;border:1px solid #e5e7eb;border-radius:7px;background:#f8fafc;color:#64748b;font-size:12px;line-height:1.4}
+    blockquote{max-width:100%;margin-inline:0;padding-left:14px;border-left:3px solid #e5e7eb;color:#52525b}
+    @media(max-width:640px){body{font-size:13px}.mail-document{padding:22px 14px 44px}table{font-size:inherit!important}td,th{padding-left:min(8px,2vw)!important;padding-right:min(8px,2vw)!important}}
+  </style>
+</head>
+<body><main class="mail-document">${message.html || `<pre>${escapeHtml(message.text)}</pre>`}</main></body>
+</html>`;
   return (
     <>
       <div className="reader-head">
-        <div className="reader-tools"><button className="reader-back" onClick={onClose} aria-label={t("返回邮件列表")}><ArrowLeft size={16} /></button><span className="reader-tool-spacer" /><button aria-label={t("归档")}><Archive size={16} /></button><button aria-label={t("删除")}><Trash2 size={16} /></button><button aria-label={t("标记星标")}><Star size={16} /></button></div>
+        <div className="reader-tools"><button className="reader-back" onClick={onClose} aria-label={t("返回邮件列表")}><ArrowLeft size={16} /></button><span className="reader-tool-spacer" /><button disabled={!canArchive || actionLoading} onClick={onArchive} aria-label={t("归档")} title={t("归档")}><Archive size={16} /></button><button disabled={actionLoading} onClick={onDelete} aria-label={t("删除")} title={t("删除")}><Trash2 size={16} /></button><button className={flagged ? "flagged" : ""} disabled={actionLoading} onClick={onToggleFlag} aria-label={t(flagged ? "取消收藏" : "收藏")} title={t(flagged ? "取消收藏" : "收藏")}><Star size={16} /></button></div>
         <h2>{message.subject}</h2>
         <div className="reader-sender"><span className="sender-avatar large">{initials(message.from)}</span><div><strong>{message.from}</strong><span>{t("发送给 {to}", { to: message.to || "me" })}</span></div><time>{formatDate(message.date, true, language === "en" ? "en-US" : "zh-CN")}</time></div>
       </div>
       {message.attachments.length > 0 && <div className="attachment-strip"><Paperclip size={15} /> {message.attachments.map((item) => <span key={item.index}>{item.filename}</span>)}</div>}
       <iframe title={message.subject} className="message-frame" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={srcDoc} />
     </>
+  );
+}
+
+function MessageMoveConfirmDialog({
+  action,
+  loading,
+  onClose,
+  onConfirm,
+}: {
+  action: MessageMoveConfirmation | null;
+  loading: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const { t } = useI18n();
+  if (!action) return null;
+  const deleting = action.targetRoute === "trash";
+  const permanent = deleting && action.sourceRoute === "trash";
+  return (
+    <div className="message-action-backdrop" onMouseDown={onClose}>
+      <section
+        className="message-action-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t(deleting ? "确认删除邮件" : "确认归档邮件")}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="message-action-copy">
+          <span className={deleting ? "danger" : "success"}>{deleting ? <Trash2 size={22} /> : <Archive size={22} />}</span>
+          <h2>{t(deleting ? "确认删除邮件" : "确认归档邮件")}</h2>
+          <p>{t(permanent ? "此邮件将被永久删除，操作无法撤销。" : deleting ? "此邮件将移至已删除文件夹。" : "此邮件将从当前文件夹移动到归档。")}</p>
+          <strong>{action.subject}</strong>
+        </div>
+        <button className={`message-action-option ${deleting ? "danger" : "success"}`} disabled={loading} onClick={onConfirm}>
+          {loading ? t("处理中…") : t(deleting ? "删除" : "归档")}
+        </button>
+        <button className="message-action-option cancel" disabled={loading} onClick={onClose}>{t("取消")}</button>
+      </section>
+    </div>
   );
 }
 

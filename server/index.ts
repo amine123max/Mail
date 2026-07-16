@@ -27,6 +27,7 @@ import {
   requireUser,
 } from "./auth";
 import {
+  createAnnouncement,
   databasePath,
   deleteGuestSession,
   deleteUserSession,
@@ -35,6 +36,8 @@ import {
   importAccounts,
   isSetupRequired,
   listAccounts,
+  listAnnouncements,
+  markAnnouncementsRead,
   transferGuestAccounts,
   updateAccount,
 } from "./database";
@@ -44,9 +47,11 @@ import {
   listFolders,
   listMessages,
   MailServiceError,
+  moveMessage,
   pollDeviceCode,
   requestDeviceCode,
   sendMessage,
+  setMessageFlag,
   testAccount,
 } from "./outlook";
 
@@ -140,6 +145,15 @@ function limitSend(_request: Request, response: Response, next: NextFunction) {
   if (record.count > 60) {
     response.setHeader("Retry-After", String(Math.ceil((record.resetAt - now) / 1000)));
     response.status(429).json({ error: "发件频率过高，请稍后再试", code: "SEND_RATE_LIMIT" });
+    return;
+  }
+  next();
+}
+
+function requireAdministrator(_request: Request, response: Response, next: NextFunction) {
+  const current = identity(response);
+  if (current.kind !== "user" || !current.isAdmin || !current.userId) {
+    response.status(403).json({ error: "仅管理员可以发布公告", code: "ADMIN_REQUIRED" });
     return;
   }
   next();
@@ -292,6 +306,24 @@ app.post("/api/auth/logout", (request, response) => {
 
 app.use("/api", requireIdentity);
 
+app.get("/api/announcements", requireUser, (_request, response) => {
+  response.json(listAnnouncements(identity(response).userId!));
+});
+
+app.post("/api/announcements/read", requireUser, (_request, response) => {
+  const marked = markAnnouncementsRead(identity(response).userId!);
+  response.json({ marked, unreadCount: 0 });
+});
+
+app.post("/api/announcements", requireUser, requireAdministrator, (request, response) => {
+  const body = z.object({
+    title: z.string().trim().min(1, "请输入公告标题").max(120),
+    content: z.string().trim().min(1, "请输入公告内容").max(4000),
+  }).parse(request.body);
+  const announcement = createAnnouncement(identity(response).userId!, body.title, body.content);
+  response.status(201).json({ announcement });
+});
+
 app.get("/api/accounts", (_request, response) => {
   response.json({ accounts: listAccounts(identity(response).ownerKey) });
 });
@@ -409,6 +441,32 @@ app.get(
       uid,
     );
     response.json({ message });
+  }),
+);
+
+app.post(
+  "/api/accounts/:id/messages/:uid/move",
+  route(async (request, response) => {
+    const uid = z.string().min(1).max(1000).parse(request.params.uid);
+    const body = z.object({
+      folder: z.string().min(1).max(1000),
+      targetFolder: z.string().min(1).max(1000),
+    }).parse(request.body);
+    await moveMessage(accountOrThrow(request.params.id, response), body.folder, uid, body.targetFolder);
+    response.status(204).end();
+  }),
+);
+
+app.patch(
+  "/api/accounts/:id/messages/:uid/flag",
+  route(async (request, response) => {
+    const uid = z.string().min(1).max(1000).parse(request.params.uid);
+    const body = z.object({
+      folder: z.string().min(1).max(1000),
+      flagged: z.boolean(),
+    }).parse(request.body);
+    await setMessageFlag(accountOrThrow(request.params.id, response), body.folder, uid, body.flagged);
+    response.json({ flagged: body.flagged });
   }),
 );
 

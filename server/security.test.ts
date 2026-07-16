@@ -132,6 +132,33 @@ describe("registration email verification", () => {
   });
 });
 
+describe("administrator announcements", () => {
+  it("publishes announcements globally and tracks each user's read state", () => {
+    const administrator = database.findUserByUsername("owner_admin")!;
+    const member = database.createUser(
+      "announcement_member",
+      "test-password-hash",
+      "announcement-member@example.invalid",
+    );
+    const published = database.createAnnouncement(
+      administrator.id,
+      "Maintenance",
+      "Mail will be updated tonight.",
+    );
+    assert.equal(published.author, "owner_admin");
+
+    const unread = database.listAnnouncements(member.id);
+    assert.equal(unread.unreadCount, 1);
+    assert.equal(unread.announcements[0].title, "Maintenance");
+    assert.equal(unread.announcements[0].read, false);
+
+    assert.equal(database.markAnnouncementsRead(member.id), 1);
+    const read = database.listAnnouncements(member.id);
+    assert.equal(read.unreadCount, 0);
+    assert.equal(read.announcements[0].read, true);
+  });
+});
+
 describe("safe original email rendering", () => {
   it("keeps the detailed IMAP response instead of a generic error", () => {
     assert.equal(

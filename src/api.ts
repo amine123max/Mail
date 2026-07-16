@@ -18,10 +18,21 @@ export interface MessageSummary {
   uid: number | string;
   subject: string;
   from: string;
+  fromEmail: string;
   to: string;
   date: string;
   unread: boolean;
   flagged: boolean;
+  preview: string;
+}
+
+export interface Announcement {
+  id: number;
+  title: string;
+  content: string;
+  author: string;
+  createdAt: string;
+  read: boolean;
 }
 
 export interface MessageDetail {

@@ -191,6 +191,11 @@ function formatAddress(address: unknown): string {
   return value.address || value.name || "";
 }
 
+function addressEmail(address: unknown): string {
+  if (!address || typeof address !== "object") return "";
+  return String((address as { address?: string }).address || "");
+}
+
 function isoDate(value: string | Date | undefined): string {
   const date = value instanceof Date ? value : value ? new Date(value) : new Date();
   return date.toISOString();
@@ -206,16 +211,34 @@ function parsedAddressText(value: unknown): string {
   return "";
 }
 
-function messageSummary(message: FetchMessageObject) {
+async function sourcePreview(source?: Buffer): Promise<string> {
+  if (!source?.length) return "";
+  try {
+    const parsed = await simpleParser(source);
+    const html = typeof parsed.html === "string"
+      ? sanitizeHtml(parsed.html, { allowedTags: [], allowedAttributes: {} })
+      : "";
+    return (parsed.text || html)
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 220);
+  } catch {
+    return "";
+  }
+}
+
+async function messageSummary(message: FetchMessageObject) {
   const envelope = message.envelope;
   return {
     uid: message.uid,
     subject: envelope?.subject || "（无主题）",
     from: formatAddress(envelope?.from?.[0]),
+    fromEmail: addressEmail(envelope?.from?.[0]),
     to: envelope?.to?.map(formatAddress).filter(Boolean).join(", ") || "",
     date: isoDate(message.internalDate || envelope?.date),
     unread: !message.flags?.has("\\Seen"),
     flagged: Boolean(message.flags?.has("\\Flagged")),
+    preview: await sourcePreview(message.source),
   };
 }
 
@@ -517,10 +540,12 @@ async function listOutlookRestMessages(
     uid: `rest:${message.Id}`,
     subject: message.Subject || "（无主题）",
     from: outlookRestAddress(message.Sender?.EmailAddress),
+    fromEmail: message.Sender?.EmailAddress?.Address || "",
     to: (message.ToRecipients || []).map((item) => outlookRestAddress(item.EmailAddress)).filter(Boolean).join(", "),
     date: isoDate(message.ReceivedDateTime),
     unread: !message.IsRead,
     flagged: message.Flag?.FlagStatus === "Flagged",
+    preview: (message.BodyPreview || "").replace(/\s+/g, " ").trim().slice(0, 220),
   }));
   markAccountSynced(account.ownerKey, account.id);
   return {
@@ -701,10 +726,10 @@ export async function listMessages(
     const messages = [];
     for await (const message of client.fetch(
       range,
-      { uid: true, envelope: true, flags: true, internalDate: true },
+      { uid: true, envelope: true, flags: true, internalDate: true, source: { start: 0, maxLength: 20_000 } },
       { uid: useUid },
     )) {
-      messages.push(messageSummary(message));
+      messages.push(await messageSummary(message));
     }
     messages.sort((a, b) => b.uid - a.uid);
     markAccountSynced(account.ownerKey, account.id);
@@ -785,6 +810,78 @@ export async function getMessage(
         size: attachment.size,
       })),
     };
+  } finally {
+    lock?.release();
+    await client.logout();
+  }
+}
+
+export async function moveMessage(
+  account: AccountCredentials,
+  folder: string,
+  uid: string,
+  targetFolder: string,
+) {
+  const { accessToken } = await refreshAccessToken(account, imapScope);
+  const numericUid = Number(uid);
+  if (folder.startsWith("rest:") || uid.startsWith("rest:") || !Number.isInteger(numericUid) || numericUid < 1) {
+    const messageId = uid.startsWith("rest:") ? uid.slice(5) : uid;
+    if (outlookRestFolder(folder) === outlookRestFolder(targetFolder)) {
+      await outlookRestRequest(accessToken, `messages/${encodeURIComponent(messageId)}`, { method: "DELETE" });
+    } else {
+      await outlookRestRequest(accessToken, `messages/${encodeURIComponent(messageId)}/move`, {
+        method: "POST",
+        body: { DestinationId: outlookRestFolder(targetFolder) },
+      });
+    }
+    markAccountSynced(account.ownerKey, account.id);
+    return;
+  }
+
+  const client = await connectImap(account, accessToken);
+  let lock: Awaited<ReturnType<ImapFlow["getMailboxLock"]>> | undefined;
+  try {
+    lock = await client.getMailboxLock(folder);
+    if (folder.toLowerCase() === targetFolder.toLowerCase()) {
+      await client.messageDelete(numericUid, { uid: true });
+    } else {
+      await client.messageMove(numericUid, targetFolder, { uid: true });
+    }
+    markAccountSynced(account.ownerKey, account.id);
+  } finally {
+    lock?.release();
+    await client.logout();
+  }
+}
+
+export async function setMessageFlag(
+  account: AccountCredentials,
+  folder: string,
+  uid: string,
+  flagged: boolean,
+) {
+  const { accessToken } = await refreshAccessToken(account, imapScope);
+  const numericUid = Number(uid);
+  if (folder.startsWith("rest:") || uid.startsWith("rest:") || !Number.isInteger(numericUid) || numericUid < 1) {
+    const messageId = uid.startsWith("rest:") ? uid.slice(5) : uid;
+    await outlookRestRequest(accessToken, `messages/${encodeURIComponent(messageId)}`, {
+      method: "PATCH",
+      body: { Flag: { FlagStatus: flagged ? "Flagged" : "NotFlagged" } },
+    });
+    markAccountSynced(account.ownerKey, account.id);
+    return;
+  }
+
+  const client = await connectImap(account, accessToken);
+  let lock: Awaited<ReturnType<ImapFlow["getMailboxLock"]>> | undefined;
+  try {
+    lock = await client.getMailboxLock(folder);
+    if (flagged) {
+      await client.messageFlagsAdd(numericUid, ["\\Flagged"], { uid: true });
+    } else {
+      await client.messageFlagsRemove(numericUid, ["\\Flagged"], { uid: true });
+    }
+    markAccountSynced(account.ownerKey, account.id);
   } finally {
     lock?.release();
     await client.logout();

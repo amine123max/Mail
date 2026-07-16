@@ -53,6 +53,24 @@ db.exec(`
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS announcements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_by INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(created_by) REFERENCES users(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS announcement_reads (
+    announcement_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    read_at TEXT NOT NULL,
+    PRIMARY KEY(announcement_id, user_id),
+    FOREIGN KEY(announcement_id) REFERENCES announcements(id) ON DELETE CASCADE,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
 `);
 
 const userColumns = db.prepare("PRAGMA table_info(users)").all() as Array<{ name: string }>;
@@ -181,7 +199,20 @@ db.exec(`
     ON users(email_hash) WHERE email_hash IS NOT NULL;
   CREATE INDEX IF NOT EXISTS idx_email_verifications_expiry
     ON email_verifications(expires_at);
+  CREATE INDEX IF NOT EXISTS idx_announcements_created
+    ON announcements(created_at DESC, id DESC);
+  CREATE INDEX IF NOT EXISTS idx_announcement_reads_user
+    ON announcement_reads(user_id, announcement_id);
 `);
+
+export interface PublicAnnouncement {
+  id: number;
+  title: string;
+  content: string;
+  author: string;
+  createdAt: string;
+  read: boolean;
+}
 
 function createAccountsTable() {
   db.exec(`
@@ -363,6 +394,89 @@ export function markAccountSynced(ownerKey: string, id: number): void {
 export function deleteAccount(ownerKey: string, id: number): boolean {
   const result = db.prepare("DELETE FROM accounts WHERE owner_key = ? AND id = ?").run(ownerKey, id);
   return result.changes > 0;
+}
+
+export function listAnnouncements(userId: number): { announcements: PublicAnnouncement[]; unreadCount: number } {
+  const rows = db.prepare(`
+    SELECT
+      announcements.id,
+      announcements.title,
+      announcements.content,
+      announcements.created_at,
+      users.username AS author,
+      CASE WHEN announcement_reads.user_id IS NULL THEN 0 ELSE 1 END AS is_read
+    FROM announcements
+    INNER JOIN users ON users.id = announcements.created_by
+    LEFT JOIN announcement_reads
+      ON announcement_reads.announcement_id = announcements.id
+      AND announcement_reads.user_id = ?
+    ORDER BY announcements.created_at DESC, announcements.id DESC
+    LIMIT 50
+  `).all(userId) as Array<{
+    id: number;
+    title: string;
+    content: string;
+    created_at: string;
+    author: string;
+    is_read: number;
+  }>;
+  const unread = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM announcements
+    WHERE NOT EXISTS (
+      SELECT 1 FROM announcement_reads
+      WHERE announcement_reads.announcement_id = announcements.id
+        AND announcement_reads.user_id = ?
+    )
+  `).get(userId) as { count: number };
+  return {
+    announcements: rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      author: row.author,
+      createdAt: row.created_at,
+      read: Boolean(row.is_read),
+    })),
+    unreadCount: Number(unread.count || 0),
+  };
+}
+
+export function createAnnouncement(userId: number, title: string, content: string): PublicAnnouncement {
+  const createdAt = new Date().toISOString();
+  const result = db.prepare(`
+    INSERT INTO announcements (title, content, created_by, created_at)
+    VALUES (?, ?, ?, ?)
+  `).run(title, content, userId, createdAt);
+  const row = db.prepare(`
+    SELECT announcements.id, announcements.title, announcements.content,
+      announcements.created_at, users.username AS author
+    FROM announcements
+    INNER JOIN users ON users.id = announcements.created_by
+    WHERE announcements.id = ?
+  `).get(Number(result.lastInsertRowid)) as {
+    id: number;
+    title: string;
+    content: string;
+    created_at: string;
+    author: string;
+  };
+  return {
+    id: row.id,
+    title: row.title,
+    content: row.content,
+    author: row.author,
+    createdAt: row.created_at,
+    read: false,
+  };
+}
+
+export function markAnnouncementsRead(userId: number): number {
+  const result = db.prepare(`
+    INSERT OR IGNORE INTO announcement_reads (announcement_id, user_id, read_at)
+    SELECT id, ?, ? FROM announcements
+  `).run(userId, new Date().toISOString());
+  return Number(result.changes);
 }
 
 export function findUserByUsername(username: string): UserRow | null {
