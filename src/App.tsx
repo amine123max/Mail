@@ -52,6 +52,20 @@ type Page = "inbox" | "accounts" | "settings";
 type Toast = { id: number; message: string; type: "success" | "error" };
 type CurrentUser = { username: string; administrator: boolean };
 const brandLogoUrl = `${import.meta.env.BASE_URL}paper-plane-logo.png`;
+const avatarGradients = [
+  "linear-gradient(145deg, #7c3aed, #3b0764)",
+  "linear-gradient(145deg, #2563eb, #172554)",
+  "linear-gradient(145deg, #db2777, #701a75)",
+  "linear-gradient(145deg, #ea580c, #7c2d12)",
+  "linear-gradient(145deg, #059669, #064e3b)",
+  "linear-gradient(145deg, #0891b2, #164e63)",
+  "linear-gradient(145deg, #ca8a04, #713f12)",
+];
+
+function avatarGradient(seed: string) {
+  const hash = [...seed].reduce((value, character) => ((value * 31) + character.charCodeAt(0)) >>> 0, 0);
+  return avatarGradients[hash % avatarGradients.length];
+}
 
 const folderDefinitions = [
   { specialUse: "\\Inbox", fallback: "INBOX", label: "收件箱", icon: Inbox },
@@ -350,7 +364,7 @@ function App() {
         </div>
       </div>
       <div className="sidebar-foot">
-        {authState === "authenticated" && currentUser && <div className="sidebar-user"><span className="sidebar-user-avatar">{currentUser.username.slice(0, 2).toUpperCase()}</span><span className="sidebar-user-copy"><strong>{currentUser.username}</strong><small>{currentUser.administrator ? t("管理员") : t("Mail 用户")}</small></span><ShieldCheck size={17} /></div>}
+        {authState === "authenticated" && currentUser && <div className="sidebar-user"><span className="sidebar-user-avatar" style={{ background: avatarGradient(currentUser.username) }}>{currentUser.username.slice(0, 2).toUpperCase()}</span><span className="sidebar-user-copy"><strong>{currentUser.username}</strong><small>{currentUser.administrator ? t("管理员") : t("Mail 用户")}</small></span><ShieldCheck size={17} /></div>}
         {authState !== "authenticated" && <div className="storage-line"><Database size={15} /><span>{t("SQLite 本地存储")}</span><ShieldCheck size={15} /></div>}
       </div>
     </>
