@@ -908,8 +908,17 @@ function InboxPage(props: {
     offset: number;
   } | null>(null);
   const longPressTimerRef = useRef<number | null>(null);
-  const suppressClickRef = useRef(false);
+  const blockClickUntilRef = useRef(0);
   const [swipeState, setSwipeState] = useState<{ uid: number | string; offset: number } | null>(null);
+  const mailPanelRef = useRef<HTMLElement | null>(null);
+  const messageColumnRef = useRef<HTMLDivElement | null>(null);
+  const resizeRef = useRef<{ startX: number; startWidth: number; currentWidth: number } | null>(null);
+  const [resizingMailLayout, setResizingMailLayout] = useState(false);
+  const [mailListWidth, setMailListWidth] = useState(() => {
+    const stored = Number(localStorage.getItem("mail-list-column-width"));
+    if (Number.isFinite(stored) && stored >= 420 && stored <= 1200) return stored;
+    return Math.max(600, Math.min(900, window.innerWidth * .55));
+  });
 
   const clearLongPressTimer = () => {
     if (longPressTimerRef.current !== null) window.clearTimeout(longPressTimerRef.current);
@@ -922,13 +931,56 @@ function InboxPage(props: {
     setSwipeState(null);
   };
 
+  const blockMessageClick = () => {
+    blockClickUntilRef.current = Date.now() + 1000;
+  };
+
+  const messageClickBlocked = () => Date.now() < blockClickUntilRef.current;
+
+  const clampMailListWidth = (width: number) => {
+    const panelWidth = mailPanelRef.current?.getBoundingClientRect().width || window.innerWidth;
+    return Math.max(420, Math.min(Math.max(420, panelWidth - 286), width));
+  };
+
+  const startMailResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || window.innerWidth <= 980 || !messageColumnRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const width = messageColumnRef.current.getBoundingClientRect().width;
+    resizeRef.current = { startX: event.clientX, startWidth: width, currentWidth: width };
+    setResizingMailLayout(true);
+  };
+
+  const moveMailResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    const resize = resizeRef.current;
+    if (!resize) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const width = clampMailListWidth(resize.startWidth + event.clientX - resize.startX);
+    resize.currentWidth = width;
+    setMailListWidth(width);
+  };
+
+  const finishMailResize = () => {
+    if (resizeRef.current) localStorage.setItem("mail-list-column-width", String(Math.round(resizeRef.current.currentWidth)));
+    resizeRef.current = null;
+    setResizingMailLayout(false);
+  };
+
+  const resizeMailWithKeyboard = (direction: -1 | 1) => {
+    const width = clampMailListWidth(mailListWidth + direction * 28);
+    setMailListWidth(width);
+    localStorage.setItem("mail-list-column-width", String(Math.round(width)));
+  };
+
   useEffect(() => () => clearLongPressTimer(), []);
 
   const startSwipeGesture = (message: MessageSummary, event: React.PointerEvent<HTMLButtonElement>) => {
     if (event.button !== 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     clearLongPressTimer();
-    suppressClickRef.current = false;
+    blockClickUntilRef.current = 0;
     gestureRef.current = {
       uid: message.uid,
       startX: event.clientX,
@@ -940,6 +992,7 @@ function InboxPage(props: {
       const gesture = gestureRef.current;
       if (!gesture || gesture.uid !== message.uid) return;
       gesture.activated = true;
+      blockMessageClick();
       setSwipeState({ uid: message.uid, offset: 0 });
     }, 360);
   };
@@ -954,11 +1007,13 @@ function InboxPage(props: {
       return;
     }
     event.preventDefault();
+    event.stopPropagation();
+    blockMessageClick();
     gesture.offset = Math.max(-112, Math.min(112, deltaX));
     setSwipeState({ uid: gesture.uid, offset: gesture.offset });
   };
 
-  const finishSwipeGesture = (message: MessageSummary) => {
+  const finishSwipeGesture = (message: MessageSummary, event: React.PointerEvent<HTMLButtonElement>) => {
     const gesture = gestureRef.current;
     clearLongPressTimer();
     if (!gesture || gesture.uid !== message.uid) {
@@ -966,9 +1021,20 @@ function InboxPage(props: {
       return;
     }
     if (gesture.activated) {
-      suppressClickRef.current = true;
+      event.preventDefault();
+      event.stopPropagation();
+      blockMessageClick();
       if (gesture.offset <= -68) props.requestMoveMessage(message, "trash");
       if (gesture.offset >= 68) props.requestMoveMessage(message, "archive");
+    }
+    resetSwipe();
+  };
+
+  const cancelSwipeGesture = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (gestureRef.current?.activated) {
+      event.preventDefault();
+      event.stopPropagation();
+      blockMessageClick();
     }
     resetSwipe();
   };
@@ -976,8 +1042,8 @@ function InboxPage(props: {
   if (!props.accounts.length) return <EmptyMailbox openImport={props.openImport} />;
 
   return (
-    <section className="mail-panel" style={{ "--mail-primary-size": `${(12.6 * props.fontScale).toFixed(1)}px`, "--mail-time-size": `${(10.8 * props.fontScale).toFixed(1)}px`, "--mail-secondary-size": `${(11.4 * props.fontScale).toFixed(1)}px`, "--mail-row-height": `${Math.round(54 * props.fontScale)}px`, "--mail-row-padding": `${Math.round(7 * props.fontScale)}px` } as React.CSSProperties}>
-        <div className="message-column">
+    <section ref={mailPanelRef} className={`mail-panel ${resizingMailLayout ? "resizing" : ""}`} style={{ "--mail-primary-size": `${(12.6 * props.fontScale).toFixed(1)}px`, "--mail-time-size": `${(10.8 * props.fontScale).toFixed(1)}px`, "--mail-secondary-size": `${(11.4 * props.fontScale).toFixed(1)}px`, "--mail-row-height": `${Math.round(54 * props.fontScale)}px`, "--mail-row-padding": `${Math.round(7 * props.fontScale)}px`, "--mail-list-width": `${mailListWidth}px` } as React.CSSProperties}>
+        <div className="message-column" ref={messageColumnRef}>
           <div className="column-head"><div className="column-title"><strong>{t("邮件列表")}</strong><span>{props.total + props.pendingSends.length} {t("封邮件")}</span></div><div className="column-actions"><button disabled={props.fontScale <= 0.9} onClick={() => props.setFontScale((value) => Math.max(0.9, Number((value - 0.1).toFixed(1))))} aria-label={t("减小邮件列表字号")}><Minus size={15} /></button><span className="font-scale-label">{Math.round(props.fontScale * 100)}%</span><button disabled={props.fontScale >= 1.4} onClick={() => props.setFontScale((value) => Math.min(1.4, Number((value + 0.1).toFixed(1))))} aria-label={t("增大邮件列表字号")}><Plus size={15} /></button><button onClick={props.reload} aria-label={t("同步")}><RefreshCw size={16} /></button></div></div>
           <div className="message-list">
             {props.pendingSends.map((pending) => (
@@ -1011,13 +1077,18 @@ function InboxPage(props: {
                     style={activeSwipe ? { transform: `translateX(${activeSwipe}px)` } : undefined}
                     onPointerDown={(event) => startSwipeGesture(message, event)}
                     onPointerMove={moveSwipeGesture}
-                    onPointerUp={() => finishSwipeGesture(message)}
-                    onPointerCancel={resetSwipe}
+                    onPointerUp={(event) => finishSwipeGesture(message, event)}
+                    onPointerCancel={cancelSwipeGesture}
                     onContextMenu={(event) => event.preventDefault()}
+                    onClickCapture={(event) => {
+                      if (!messageClickBlocked()) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
                     onClick={(event) => {
-                      if (suppressClickRef.current) {
-                        suppressClickRef.current = false;
+                      if (messageClickBlocked()) {
                         event.preventDefault();
+                        event.stopPropagation();
                         return;
                       }
                       props.openMessage(message);
@@ -1048,6 +1119,30 @@ function InboxPage(props: {
             <button disabled={props.page * 30 >= props.total} onClick={() => props.setPage((page) => page + 1)}><ChevronRight size={15} /></button>
           </div>
         </div>
+
+        <div
+          className="mail-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t("调整邮件列表宽度")}
+          aria-valuemin={420}
+          aria-valuemax={1200}
+          aria-valuenow={Math.round(mailListWidth)}
+          tabIndex={0}
+          onPointerDown={startMailResize}
+          onPointerMove={moveMailResize}
+          onPointerUp={finishMailResize}
+          onPointerCancel={finishMailResize}
+          onDoubleClick={() => {
+            const width = clampMailListWidth(window.innerWidth * .55);
+            setMailListWidth(width);
+            localStorage.setItem("mail-list-column-width", String(Math.round(width)));
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft") { event.preventDefault(); resizeMailWithKeyboard(-1); }
+            if (event.key === "ArrowRight") { event.preventDefault(); resizeMailWithKeyboard(1); }
+          }}
+        ><span /></div>
 
         <article className="reader-column">
           {props.detailLoading && <div className="reader-empty"><RefreshCw className="spin" size={22} /><span>{t("正在打开邮件…")}</span></div>}
@@ -1143,7 +1238,6 @@ function MessageMoveConfirmDialog({
   const { t } = useI18n();
   if (!action) return null;
   const deleting = action.targetRoute === "trash";
-  const permanent = deleting && action.sourceRoute === "trash";
   return (
     <div className="message-action-backdrop" onMouseDown={onClose}>
       <section
@@ -1154,9 +1248,10 @@ function MessageMoveConfirmDialog({
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="message-action-copy">
-          <span className={deleting ? "danger" : "success"}>{deleting ? <Trash2 size={22} /> : <Archive size={22} />}</span>
-          <h2>{t(deleting ? "确认删除邮件" : "确认归档邮件")}</h2>
-          <p>{t(permanent ? "此邮件将被永久删除，操作无法撤销。" : deleting ? "此邮件将移至已删除文件夹。" : "此邮件将从当前文件夹移动到归档。")}</p>
+          <div className="message-action-title">
+            <span className={deleting ? "danger" : "success"}>{deleting ? <Trash2 size={18} /> : <Archive size={18} />}</span>
+            <h2>{t(deleting ? "确认删除邮件" : "确认归档邮件")}</h2>
+          </div>
           <strong>{action.subject}</strong>
         </div>
         <button className={`message-action-option ${deleting ? "danger" : "success"}`} disabled={loading} onClick={onConfirm}>
