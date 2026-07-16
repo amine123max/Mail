@@ -35,6 +35,7 @@ export interface Identity {
   ownerKey: string;
   userId?: number;
   username?: string;
+  isAdmin?: boolean;
   guestId?: string;
 }
 
@@ -449,6 +450,7 @@ export function getIdentity(request: Request): Identity | null {
         kind: "user",
         userId: user.id,
         username: user.username,
+        isAdmin: Boolean(user.is_admin),
         ownerKey: `user:${user.id}`,
       };
     }

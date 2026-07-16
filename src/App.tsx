@@ -15,6 +15,7 @@ import {
   LockKeyhole,
   LogOut,
   Menu,
+  Minus,
   Moon,
   Paperclip,
   Plus,
@@ -47,6 +48,7 @@ import { useI18n } from "./i18n";
 
 type Page = "inbox" | "accounts" | "settings";
 type Toast = { id: number; message: string; type: "success" | "error" };
+type CurrentUser = { username: string; administrator: boolean };
 const brandLogoUrl = `${import.meta.env.BASE_URL}paper-plane-logo.png`;
 
 const folderDefinitions = [
@@ -60,6 +62,7 @@ const folderDefinitions = [
 function App() {
   const { language, setLanguage, t } = useI18n();
   const [authState, setAuthState] = useState<"checking" | "setup" | "signedOut" | "guest" | "authenticated">("checking");
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [page, setPage] = useState<Page>("inbox");
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
@@ -80,6 +83,10 @@ function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [dark, setDark] = useState(() => localStorage.getItem("mail-theme") === "dark");
+  const [mailFontScale, setMailFontScale] = useState(() => {
+    const stored = Number(localStorage.getItem("mail-list-font-scale"));
+    return Number.isFinite(stored) && stored >= 0.9 && stored <= 1.4 ? stored : 1.1;
+  });
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) || null;
 
@@ -97,9 +104,16 @@ function App() {
   }, [dark]);
 
   useEffect(() => {
-    api<{ authenticated: boolean; guest: boolean; setupRequired: boolean }>("/api/auth/status")
-      .then((result) => setAuthState(result.setupRequired ? "setup" : result.authenticated ? "authenticated" : result.guest ? "guest" : "signedOut"))
-      .catch(() => setAuthState("signedOut"));
+    localStorage.setItem("mail-list-font-scale", String(mailFontScale));
+  }, [mailFontScale]);
+
+  useEffect(() => {
+    api<{ authenticated: boolean; guest: boolean; setupRequired: boolean; username: string | null; administrator: boolean }>("/api/auth/status")
+      .then((result) => {
+        setCurrentUser(result.authenticated && result.username ? { username: result.username, administrator: result.administrator } : null);
+        setAuthState(result.setupRequired ? "setup" : result.authenticated ? "authenticated" : result.guest ? "guest" : "signedOut");
+      })
+      .catch(() => { setCurrentUser(null); setAuthState("signedOut"); });
   }, []);
 
   const loadAccounts = useCallback(async () => {
@@ -207,7 +221,7 @@ function App() {
   }
 
   if (authState === "signedOut" || authState === "setup") {
-    return <LoginPage setupRequired={authState === "setup"} dark={dark} setDark={setDark} onLogin={() => setAuthState("authenticated")} onGuest={() => setAuthState("guest")} />;
+    return <LoginPage setupRequired={authState === "setup"} dark={dark} setDark={setDark} onLogin={(user) => { setCurrentUser(user); setAuthState("authenticated"); }} onGuest={() => { setCurrentUser(null); setAuthState("guest"); }} />;
   }
 
   const sidebar = (
@@ -265,6 +279,7 @@ function App() {
         ))}
       </div>
       <div className="sidebar-foot">
+        {authState === "authenticated" && currentUser && <div className="sidebar-user"><span className="sidebar-user-avatar">{currentUser.username.slice(0, 2).toUpperCase()}</span><span className="sidebar-user-copy"><strong>{currentUser.username}</strong><small>{currentUser.administrator ? t("管理员") : t("Mail 用户")}</small></span><ShieldCheck size={17} /></div>}
         <div className="storage-line"><Database size={15} /><span>{t("SQLite 本地存储")}</span><ShieldCheck size={15} /></div>
       </div>
     </>
@@ -299,6 +314,7 @@ function App() {
                 await api("/api/auth/logout", { method: "POST" });
                 setAccounts([]);
                 setSelectedAccountId(null);
+                setCurrentUser(null);
                 setAuthState("signedOut");
               }}
             ><LogOut size={14} /></button>
@@ -318,6 +334,8 @@ function App() {
               openMessage={openMessage}
               reload={loadMessages}
               openImport={() => setImportOpen(true)}
+              fontScale={mailFontScale}
+              setFontScale={setMailFontScale}
               page={mailPage}
               setPage={setMailPage}
             />
@@ -358,7 +376,7 @@ function App() {
   );
 }
 
-function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRequired: boolean; dark: boolean; setDark: (value: boolean) => void; onLogin: () => void; onGuest: () => void }) {
+function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRequired: boolean; dark: boolean; setDark: (value: boolean) => void; onLogin: (user: CurrentUser) => void; onGuest: () => void }) {
   const { language, setLanguage, t } = useI18n();
   const [mode, setMode] = useState<"login" | "register" | "setup">(setupRequired ? "setup" : "login");
   const [username, setUsername] = useState("");
@@ -415,8 +433,8 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
       const body = mode === "login"
         ? { email, password }
         : { username, email, password, verificationCode };
-      await api(endpoint, { method: "POST", body: JSON.stringify(body) });
-      onLogin();
+      const result = await api<{ username: string; administrator?: boolean }>(endpoint, { method: "POST", body: JSON.stringify(body) });
+      onLogin({ username: result.username, administrator: Boolean(result.administrator) });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "登录失败");
     } finally {
@@ -484,6 +502,8 @@ function InboxPage(props: {
   openMessage: (message: MessageSummary) => void;
   reload: () => void;
   openImport: () => void;
+  fontScale: number;
+  setFontScale: (value: number | ((current: number) => number)) => void;
   page: number;
   setPage: (value: number | ((current: number) => number)) => void;
 }) {
@@ -491,9 +511,9 @@ function InboxPage(props: {
   if (!props.accounts.length) return <EmptyMailbox openImport={props.openImport} />;
 
   return (
-    <section className="mail-panel">
+    <section className="mail-panel" style={{ "--mail-primary-size": `${(10.5 * props.fontScale).toFixed(1)}px`, "--mail-time-size": `${(8.5 * props.fontScale).toFixed(1)}px`, "--mail-secondary-size": `${(9 * props.fontScale).toFixed(1)}px`, "--mail-row-height": `${Math.round(89 * props.fontScale)}px`, "--mail-row-padding": `${Math.round(13 * props.fontScale)}px` } as React.CSSProperties}>
         <div className="message-column">
-          <div className="column-head"><div><strong>{t("邮件列表")}</strong><span>{props.total} {t("封邮件")}</span></div><button onClick={props.reload} aria-label={t("同步")}><RefreshCw size={16} /></button></div>
+          <div className="column-head"><div className="column-title"><strong>{t("邮件列表")}</strong><span>{props.total} {t("封邮件")}</span></div><div className="column-actions"><button disabled={props.fontScale <= 0.9} onClick={() => props.setFontScale((value) => Math.max(0.9, Number((value - 0.1).toFixed(1))))} aria-label={t("减小邮件列表字号")}><Minus size={15} /></button><span className="font-scale-label">{Math.round(props.fontScale * 100)}%</span><button disabled={props.fontScale >= 1.4} onClick={() => props.setFontScale((value) => Math.min(1.4, Number((value + 0.1).toFixed(1))))} aria-label={t("增大邮件列表字号")}><Plus size={15} /></button><button onClick={props.reload} aria-label={t("同步")}><RefreshCw size={16} /></button></div></div>
           <div className="message-list">
             {props.loading && <div className="loading-state"><RefreshCw className="spin" size={20} /> {t("正在同步邮件…")}</div>}
             {!props.loading && !props.messages.length && <div className="empty-list"><img className="state-plane-logo small" src={brandLogoUrl} alt="" /><strong>{t("这里还没有邮件")}</strong><span>{t("尝试同步或切换其他文件夹")}</span></div>}

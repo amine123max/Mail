@@ -183,6 +183,7 @@ app.get("/api/auth/status", (request, response) => {
     authenticated: current?.kind === "user",
     guest: current?.kind === "guest",
     username: current?.username || null,
+    administrator: current?.kind === "user" && Boolean(current.isAdmin),
     setupRequired: isSetupRequired(),
   });
 });
@@ -243,7 +244,7 @@ app.post("/api/auth/login", limitAuth, (request, response) => {
     createSessionCookie(request, user),
     clearGuestCookie(),
   ]);
-  response.json({ authenticated: true, username: user.username, transferred });
+  response.json({ authenticated: true, username: user.username, administrator: Boolean(user.is_admin), transferred });
 });
 
 app.post("/api/auth/register", limitAuth, (request, response) => {
@@ -262,7 +263,7 @@ app.post("/api/auth/register", limitAuth, (request, response) => {
     createSessionCookie(request, user),
     clearGuestCookie(),
   ]);
-  response.status(201).json({ authenticated: true, username: user.username, transferred });
+  response.status(201).json({ authenticated: true, username: user.username, administrator: false, transferred });
 });
 
 app.post("/api/auth/guest", limitAuth, (request, response) => {
