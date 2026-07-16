@@ -3,8 +3,10 @@ import {
   Archive,
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   CircleAlert,
   Cloud,
   Database,
@@ -75,6 +77,9 @@ function App() {
   const [messageLoading, setMessageLoading] = useState(false);
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
+  const [accountSearchOpen, setAccountSearchOpen] = useState(false);
+  const [accountSearch, setAccountSearch] = useState("");
+  const [accountsCollapsed, setAccountsCollapsed] = useState(false);
   const [mailPage, setMailPage] = useState(1);
   const [importOpen, setImportOpen] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
@@ -89,6 +94,11 @@ function App() {
   });
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) || null;
+  const filteredAccounts = useMemo(() => {
+    const query = accountSearch.trim().toLocaleLowerCase();
+    if (!query) return accounts;
+    return accounts.filter((account) => `${account.remark || ""}\n${account.email}`.toLocaleLowerCase().includes(query));
+  }, [accountSearch, accounts]);
 
   const notify = useCallback((message: string, type: "success" | "error" = "success") => {
     const id = Date.now() + Math.random();
@@ -234,49 +244,110 @@ function App() {
       <button className="compose-button" onClick={() => setComposeOpen(true)} disabled={!accounts.length || authState === "guest"} title={authState === "guest" ? t("游客模式仅支持收件") : ""}>
         <Plus size={18} /> {t("写邮件")}
       </button>
-      <nav className="side-nav">
-        <span className="nav-label">{t("邮件")}</span>
-        {visibleFolders.map((folder) => {
-          const Icon = folder.icon;
-          const isActive = page === "inbox" && selectedFolder === folder.path;
-          return (
-            <button key={folder.label} className={isActive ? "active" : ""} disabled={!folder.available} onClick={() => openFolder(folder)}>
-              <Icon size={18} /> {t(folder.label)}
-              {folder.specialUse === "\\Inbox" && messages.filter((message) => message.unread).length > 0 && <em>{messages.filter((message) => message.unread).length}</em>}
+      <div className="sidebar-scroll">
+        <nav className="side-nav">
+          <span className="nav-label">{t("邮件")}</span>
+          {visibleFolders.map((folder) => {
+            const Icon = folder.icon;
+            const isActive = page === "inbox" && selectedFolder === folder.path;
+            return (
+              <button key={folder.label} className={isActive ? "active" : ""} disabled={!folder.available} onClick={() => openFolder(folder)}>
+                <Icon size={18} /> {t(folder.label)}
+                {folder.specialUse === "\\Inbox" && messages.filter((message) => message.unread).length > 0 && <em>{messages.filter((message) => message.unread).length}</em>}
+              </button>
+            );
+          })}
+          <span className="nav-label nav-label-spaced">{t("管理")}</span>
+          <button className={page === "accounts" ? "active" : ""} onClick={() => navigate("accounts")}>
+            <Users size={18} /> {t("账号管理")}
+          </button>
+          <button onClick={() => setImportOpen(true)}><Plus size={18} /> {t("导入账号")}</button>
+          <button onClick={() => { setOauthAccount(selectedAccount); setOauthOpen(true); }}><KeyRound size={18} /> {t("微软授权")}</button>
+          <span className="nav-label nav-label-spaced">{t("系统")}</span>
+          <button className={page === "settings" ? "active" : ""} onClick={() => navigate("settings")}>
+            <Settings size={18} /> {t("系统设置")}
+          </button>
+          <div className="side-language">
+            <Languages size={18} />
+            <span>{t("界面语言")}</span>
+            <button className="language-toggle compact" onClick={() => setLanguage(language === "zh" ? "en" : "zh")} aria-label={t("界面语言")}>
+              {language === "zh" ? "EN" : "中文"}
             </button>
-          );
-        })}
-        <span className="nav-label nav-label-spaced">{t("管理")}</span>
-        <button className={page === "accounts" ? "active" : ""} onClick={() => navigate("accounts")}>
-          <Users size={18} /> {t("账号管理")}
-        </button>
-        <button onClick={() => setImportOpen(true)}><Plus size={18} /> {t("导入账号")}</button>
-        <button onClick={() => { setOauthAccount(selectedAccount); setOauthOpen(true); }}><KeyRound size={18} /> {t("微软授权")}</button>
-        <span className="nav-label nav-label-spaced">{t("系统")}</span>
-        <button className={page === "settings" ? "active" : ""} onClick={() => navigate("settings")}>
-          <Settings size={18} /> {t("系统设置")}
-        </button>
-        <div className="side-language">
-          <Languages size={18} />
-          <span>{t("界面语言")}</span>
-          <button className="language-toggle compact" onClick={() => setLanguage(language === "zh" ? "en" : "zh")} aria-label={t("界面语言")}>
-            {language === "zh" ? "EN" : "中文"}
-          </button>
+          </div>
+        </nav>
+        <div className="side-accounts">
+          <div className="side-section-title">
+            <span>{t("邮箱账号")}</span>
+            <div className="side-section-actions">
+              <button
+                onClick={() => {
+                  if (accountSearchOpen) {
+                    setAccountSearchOpen(false);
+                    setAccountSearch("");
+                  } else {
+                    setAccountsCollapsed(false);
+                    setAccountSearchOpen(true);
+                  }
+                }}
+                aria-label={t(accountSearchOpen ? "关闭搜索" : "搜索邮箱账号")}
+                title={t(accountSearchOpen ? "关闭搜索" : "搜索邮箱账号")}
+              >
+                {accountSearchOpen ? <X size={14} /> : <Search size={14} />}
+              </button>
+              <button onClick={() => setImportOpen(true)} aria-label={t("导入账号")} title={t("导入账号")}><Plus size={14} /></button>
+              <button
+                onClick={() => {
+                  setAccountsCollapsed((collapsed) => {
+                    if (!collapsed) {
+                      setAccountSearchOpen(false);
+                      setAccountSearch("");
+                    }
+                    return !collapsed;
+                  });
+                }}
+                aria-expanded={!accountsCollapsed}
+                aria-label={t(accountsCollapsed ? "展开邮箱账号" : "收起邮箱账号")}
+                title={t(accountsCollapsed ? "展开邮箱账号" : "收起邮箱账号")}
+              >
+                {accountsCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+              </button>
+            </div>
+          </div>
+          {accountSearchOpen && !accountsCollapsed && (
+            <div className="account-search">
+              <Search size={14} />
+              <input
+                autoFocus
+                value={accountSearch}
+                onChange={(event) => setAccountSearch(event.target.value)}
+                placeholder={t("搜索邮箱账号")}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setAccountSearchOpen(false);
+                  setAccountSearch("");
+                }}
+                aria-label={t("关闭搜索")}
+                title={t("关闭搜索")}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          )}
+          {!accountsCollapsed && filteredAccounts.map((account) => (
+            <button
+              key={account.id}
+              className={account.id === selectedAccountId ? "account-mini active" : "account-mini"}
+              onClick={() => { setSelectedAccountId(account.id); navigate("inbox"); }}
+            >
+              <span className="mini-avatar">{account.email.slice(0, 1).toUpperCase()}</span>
+              <span><strong>{account.remark || account.email.split("@")[0]}</strong><small>{account.email}</small></span>
+              <i className="status-dot" />
+            </button>
+          ))}
+          {!accountsCollapsed && Boolean(accountSearch.trim()) && !filteredAccounts.length && <div className="side-empty">{t("没有匹配的邮箱账号")}</div>}
         </div>
-      </nav>
-      <div className="side-accounts">
-        <div className="side-section-title"><span>{t("邮箱账号")}</span><button onClick={() => setImportOpen(true)}><Plus size={14} /></button></div>
-        {accounts.slice(0, 4).map((account) => (
-          <button
-            key={account.id}
-            className={account.id === selectedAccountId ? "account-mini active" : "account-mini"}
-            onClick={() => { setSelectedAccountId(account.id); navigate("inbox"); }}
-          >
-            <span className="mini-avatar">{account.email.slice(0, 1).toUpperCase()}</span>
-            <span><strong>{account.remark || account.email.split("@")[0]}</strong><small>{account.email}</small></span>
-            <i className="status-dot" />
-          </button>
-        ))}
       </div>
       <div className="sidebar-foot">
         {authState === "authenticated" && currentUser && <div className="sidebar-user"><span className="sidebar-user-avatar">{currentUser.username.slice(0, 2).toUpperCase()}</span><span className="sidebar-user-copy"><strong>{currentUser.username}</strong><small>{currentUser.administrator ? t("管理员") : t("Mail 用户")}</small></span><ShieldCheck size={17} /></div>}

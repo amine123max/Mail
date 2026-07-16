@@ -58,13 +58,14 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 button { color: inherit; }
 
 .app-shell { min-height: 100vh; display: flex; background: var(--background); }
-.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 30; width: 244px; display: flex; flex-direction: column; padding: 17px 14px 14px; overflow-x: hidden; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; border-right: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 94%, transparent); }
-.sidebar::-webkit-scrollbar, .message-list::-webkit-scrollbar { display: none; }
-.brand-row { height: 34px; display: flex; align-items: center; gap: 10px; padding: 0 7px; font: 400 21px/1 "Bahamas Bold", sans-serif; letter-spacing: .01em; }
+.sidebar { position: fixed; inset: 0 auto 0 0; z-index: 30; width: 244px; display: flex; flex-direction: column; padding: 17px 14px 14px; overflow: hidden; border-right: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 94%, transparent); }
+.sidebar-scroll { min-height: 0; flex: 1; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; -ms-overflow-style: none; }
+.sidebar-scroll::-webkit-scrollbar, .message-list::-webkit-scrollbar { width: 0; height: 0; display: none; }
+.brand-row { height: 34px; display: flex; align-items: center; flex: none; gap: 10px; padding: 0 7px; font: 400 21px/1 "Bahamas Bold", sans-serif; letter-spacing: .01em; }
 .brand-mark { width: 31px; height: 31px; display: grid; place-items: center; flex: none; background: transparent; }
 .brand-mark img { width: 100%; height: 100%; display: block; object-fit: contain; }
 .mobile-close { display: none; margin-left: auto; border: 0; background: transparent; }
-.compose-button { width: 100%; height: 42px; display: flex; align-items: center; justify-content: center; gap: 8px; margin: 22px 0 18px; border: 1px solid #242428; border-radius: 8px; color: #fff; background: #17171a; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.compose-button { width: 100%; height: 42px; display: flex; align-items: center; justify-content: center; flex: none; gap: 8px; margin: 22px 0 18px; border: 1px solid #242428; border-radius: 8px; color: #fff; background: #17171a; font-weight: 600; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
 .dark .compose-button { color: #111; border-color: #fff; background: #f5f5f5; }
 .compose-button:hover { transform: translateY(-1px); }
 .side-nav { display: grid; gap: 3px; }
@@ -83,8 +84,14 @@ button { color: inherit; }
 .side-accounts { flex: none; margin-top: 27px; overflow: visible; }
 .side-section-title { display: flex; align-items: center; justify-content: space-between; margin: 0 7px 9px; color: var(--muted-2); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .side-section-title button, .side-accounts button { border: 0; background: transparent; }
+.side-section-actions { display: flex; align-items: center; gap: 1px; }
 .side-section-title button { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 5px; }
 .side-section-title button:hover { background: var(--surface-soft); }
+.account-search { height: 32px; display: flex; align-items: center; gap: 7px; margin: 0 5px 6px; padding: 0 7px; border-radius: 7px; color: var(--muted); background: var(--surface-soft); }
+.account-search input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--foreground); background: transparent; font-size: 10px; }
+.account-search input::placeholder { color: var(--muted-2); }
+.account-search button { width: 22px; height: 22px; display: grid; place-items: center; flex: none; padding: 0; border-radius: 5px; color: var(--muted); }
+.account-search button:hover { color: var(--foreground); background: color-mix(in srgb, var(--surface) 72%, transparent); }
 .account-mini { position: relative; width: 100%; display: flex; align-items: center; gap: 9px; padding: 8px 7px; border-radius: 7px; text-align: left; }
 .account-mini:hover, .account-mini.active { background: var(--surface-soft); }
 .mini-avatar { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--foreground); font-size: 11px; font-weight: 700; }
@@ -94,7 +101,7 @@ button { color: inherit; }
 .account-mini small { max-width: 145px; color: var(--muted); font-size: 9px; }
 .status-dot { width: 7px; height: 7px; display: inline-block; flex: none; margin-left: auto; border: 2px solid var(--surface); border-radius: 50%; background: #30a46c; box-shadow: 0 0 0 1px rgba(48,164,108,.25); }
 .side-empty { padding: 8px; color: var(--muted); font-size: 11px; line-height: 1.6; }
-.sidebar-foot { flex: none; margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border); }
+.sidebar-foot { flex: none; margin-top: 0; padding-top: 12px; border-top: 1px solid var(--border); background: inherit; }
 .sidebar-user { min-width: 0; display: flex; align-items: center; gap: 10px; margin-bottom: 12px; padding: 5px 4px; }
 .sidebar-user-avatar { width: 34px; height: 34px; display: grid; place-items: center; flex: none; border-radius: 50%; color: #fff; background: linear-gradient(145deg, #2563eb, #172554); font-size: 10px; font-weight: 700; }
 .sidebar-user-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
@@ -358,9 +365,8 @@ button { color: inherit; }
   .workspace { margin-left: 0; }
   .mobile-menu { display: grid; }
   .mobile-nav-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.35); backdrop-filter: blur(3px); }
-  .mobile-nav-overlay > aside { width: 260px; height: 100%; display: flex; flex-direction: column; padding: 17px 14px 14px; overflow-y: auto; overscroll-behavior: contain; border-right: 1px solid var(--border); background: var(--surface); animation: slide-in .2s ease; }
+  .mobile-nav-overlay > aside { width: 260px; height: 100%; display: flex; flex-direction: column; padding: 17px 14px 14px; overflow: hidden; border-right: 1px solid var(--border); background: var(--surface); animation: slide-in .2s ease; }
   .mobile-nav-overlay .mobile-close { display: block; }
-  .mobile-nav-overlay .side-accounts { flex: none; overflow: visible; }
   .topbar { padding-inline: 18px; }
   .mail-panel { grid-template-columns: minmax(285px, 1fr); }
   .reader-column { position: fixed; inset: 60px 0 0 0; z-index: 25; display: none; }
