@@ -9,10 +9,12 @@ process.env.MAIL_DATA_DIR = testDir;
 
 let database: typeof import("./database");
 let auth: typeof import("./auth");
+let outlook: typeof import("./outlook");
 
 before(async () => {
   database = await import("./database");
   auth = await import("./auth");
+  outlook = await import("./outlook");
 });
 
 const alpha = {
@@ -37,16 +39,20 @@ const guest = {
 describe("first deployment administrator setup", () => {
   it("requires a one-time administrator and permanently closes setup", () => {
     assert.equal(database.isSetupRequired(), true);
-    const administrator = database.createAdministrator(
+    const administrator = auth.bootstrapAdministrator(
       "owner_admin",
-      "scrypt:test:hash",
       "owner@example.invalid",
+      "owner-password-123",
     );
     assert.equal(administrator.is_admin, 1);
     assert.equal(database.isSetupRequired(), false);
+    assert.equal(
+      auth.authenticate("owner@example.invalid", "owner-password-123")?.id,
+      administrator.id,
+    );
     assert.throws(
-      () => database.createAdministrator("second_admin", "scrypt:test:hash", "second@example.invalid"),
-      /SETUP_ALREADY_COMPLETED/,
+      () => auth.bootstrapAdministrator("second_admin", "second@example.invalid", "second-password-123"),
+      /管理员初始化已完成/,
     );
   });
 });
@@ -106,6 +112,34 @@ describe("registration email verification", () => {
     assert.ok(user.email_encrypted.startsWith("v1:"));
     assert.ok(!Object.values(user).some((value) => value.includes("owner@example.invalid")));
     rawDatabase.close();
+  });
+});
+
+describe("safe original email rendering", () => {
+  it("keeps the detailed IMAP response instead of a generic error", () => {
+    assert.equal(
+      outlook.mailErrorMessage({ responseText: "NO User is authenticated but not connected", message: "Command failed" }),
+      "NO User is authenticated but not connected",
+    );
+  });
+
+  it("embeds CID images and removes unresolved image requests", async () => {
+    const inlineImages = new Map([
+      ["mail-logo", "data:image/png;base64,cGxhbmU="],
+    ]);
+    const rendered = await outlook.renderMessageHtml(
+      '<table><tr><td><img src="cid:mail-logo" alt="Mail"></td></tr></table><img src="cid:missing">',
+      inlineImages,
+    );
+    assert.match(rendered, /data:image\/png;base64,cGxhbmU=/);
+    assert.match(rendered, /mail-image-unavailable/);
+    assert.doesNotMatch(rendered, /cid:missing/);
+  });
+
+  it("rejects private-network image URLs before fetching", async () => {
+    await assert.rejects(() => outlook.validateRemoteImageUrl("http://127.0.0.1/image.png"), /Private/);
+    await assert.rejects(() => outlook.validateRemoteImageUrl("http://[::1]/image.png"), /Private/);
+    await assert.rejects(() => outlook.validateRemoteImageUrl("http://localhost/image.png"), /Private/);
   });
 });
 

@@ -228,7 +228,7 @@ app.post("/api/auth/login", limitAuth, (request, response) => {
     .parse(request.body);
   const user = authenticate(body.username, body.password);
   if (!user) {
-    response.status(401).json({ error: "用户名或密码错误", code: "LOGIN_FAILED" });
+    response.status(401).json({ error: "用户名、邮箱或密码错误", code: "LOGIN_FAILED" });
     return;
   }
   const guestId = getGuestId(request);
@@ -394,7 +394,7 @@ app.get(
 app.get(
   "/api/accounts/:id/messages/:uid",
   route(async (request, response) => {
-    const uid = z.coerce.number().int().positive().parse(request.params.uid);
+    const uid = z.string().min(1).max(1000).parse(request.params.uid);
     const folder = z.string().min(1).parse(request.query.folder || "INBOX");
     const message = await getMessage(
       accountOrThrow(request.params.id, response),

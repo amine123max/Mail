@@ -15,7 +15,7 @@ export interface MailFolder {
 }
 
 export interface MessageSummary {
-  uid: number;
+  uid: number | string;
   subject: string;
   from: string;
   to: string;
@@ -25,7 +25,7 @@ export interface MessageSummary {
 }
 
 export interface MessageDetail {
-  uid: number;
+  uid: number | string;
   subject: string;
   from: string;
   to: string;

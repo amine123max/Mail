@@ -286,7 +286,9 @@ function readSignedCookie<T>(request: Request, name: string): T | null {
 }
 
 export function authenticate(inputUser: string, inputPassword: string): UserRow | null {
-  const user = findUserByUsername(inputUser);
+  const identifier = inputUser.trim();
+  const user = findUserByUsername(identifier) ||
+    (identifier.includes("@") ? findUserByEmail(identifier) : null);
   return user && verifyPassword(inputPassword, user.password_hash) ? user : null;
 }
 

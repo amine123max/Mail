@@ -78,6 +78,8 @@ const english: Record<string, string> = {
   "欢迎回来": "Welcome back",
   "登录并继续管理你的 Outlook 与 Hotmail 邮箱": "Sign in to continue managing your Outlook and Hotmail mailboxes",
   "用户名": "Username",
+  "用户名或邮箱": "Username or email",
+  "输入用户名或邮箱": "Enter username or email",
   "密码": "Password",
   "输入管理员密码": "Enter administrator password",
   "登录 Mail": "Sign in to Mail",

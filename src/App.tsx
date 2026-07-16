@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Archive,
   ArrowLeft,
-  AtSign,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -15,10 +14,8 @@ import {
   Languages,
   LockKeyhole,
   LogOut,
-  Mail as MailIcon,
   Menu,
   Moon,
-  MoreHorizontal,
   Paperclip,
   Plus,
   RefreshCw,
@@ -26,7 +23,6 @@ import {
   Send,
   Settings,
   ShieldCheck,
-  Sparkles,
   Star,
   Sun,
   Trash2,
@@ -177,7 +173,7 @@ function App() {
     try {
       const params = new URLSearchParams({ folder: selectedFolder });
       const result = await api<{ message: MessageDetail }>(
-        `/api/accounts/${selectedAccountId}/messages/${message.uid}?${params}`,
+        `/api/accounts/${selectedAccountId}/messages/${encodeURIComponent(String(message.uid))}?${params}`,
       );
       setSelectedMessage(result.message);
       setMessages((current) => current.map((item) => item.uid === message.uid ? { ...item, unread: false } : item));
@@ -309,16 +305,10 @@ function App() {
           </div>
         </header>
 
-        <main className="main-content">
+        <main className={`main-content ${page === "inbox" ? "inbox-content" : ""}`}>
           {page === "inbox" && (
             <InboxPage
               accounts={accounts}
-              selectedAccount={selectedAccount}
-              selectedAccountId={selectedAccountId}
-              setSelectedAccountId={setSelectedAccountId}
-              visibleFolders={visibleFolders}
-              selectedFolder={selectedFolder}
-              setSelectedFolder={(folder) => { setMailPage(1); setSelectedFolder(folder); }}
               messages={messages}
               total={messageTotal}
               loading={loading}
@@ -328,8 +318,6 @@ function App() {
               openMessage={openMessage}
               reload={loadMessages}
               openImport={() => setImportOpen(true)}
-              openCompose={() => setComposeOpen(true)}
-              canSend={authState === "authenticated"}
               page={mailPage}
               setPage={setMailPage}
             />
@@ -461,7 +449,7 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
         <h1>{mode === "setup" ? t("配置管理员") : mode === "login" ? t("欢迎回来") : t("创建个人空间")}</h1>
         {!setupRequired && <div className="auth-tabs"><button className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}>{t("登录")}</button><button className={mode === "register" ? "active" : ""} onClick={() => changeMode("register")}>{t("注册")}</button></div>}
         <form onSubmit={submit}>
-          <label className="stack-field"><span>{t("用户名")}</span><input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" placeholder={mode !== "login" ? t("3-32 位字母、数字或下划线") : ""} /></label>
+          <label className="stack-field"><span>{mode === "login" ? t("用户名或邮箱") : t("用户名")}</span><input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" placeholder={mode !== "login" ? t("3-32 位字母、数字或下划线") : t("输入用户名或邮箱")} /></label>
           {mode !== "login" && <label className="stack-field"><span>{t("邮箱")}</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder="name@example.com" /></label>}
           <label className="stack-field"><span>{t("密码")}</span><input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === "setup" ? t("管理员密码至少 12 位") : mode === "register" ? t("至少 8 位密码") : t("输入密码")} autoComplete={mode === "login" ? "current-password" : "new-password"} /></label>
           {mode !== "login" && <label className="stack-field"><span>{t("验证码")}</span><div className="verification-control"><input value={verificationCode} onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" placeholder={t("6 位验证码")} /><button type="button" disabled={!email || sendingCode || resendSeconds > 0} onClick={sendVerificationCode}>{sendingCode ? t("发送中…") : resendSeconds > 0 ? t("{seconds} 秒后重发", { seconds: resendSeconds }) : t("发送验证码")}</button></div></label>}
@@ -486,12 +474,6 @@ function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string;
 
 function InboxPage(props: {
   accounts: Account[];
-  selectedAccount: Account | null;
-  selectedAccountId: number | null;
-  setSelectedAccountId: (id: number) => void;
-  visibleFolders: Array<(typeof folderDefinitions)[number] & { path: string; available: boolean }>;
-  selectedFolder: string;
-  setSelectedFolder: (folder: string) => void;
   messages: MessageSummary[];
   total: number;
   loading: boolean;
@@ -501,63 +483,19 @@ function InboxPage(props: {
   openMessage: (message: MessageSummary) => void;
   reload: () => void;
   openImport: () => void;
-  openCompose: () => void;
-  canSend: boolean;
   page: number;
   setPage: (value: number | ((current: number) => number)) => void;
 }) {
   const { language, t } = useI18n();
-  const unread = props.messages.filter((message) => message.unread).length;
   if (!props.accounts.length) return <EmptyMailbox openImport={props.openImport} />;
 
   return (
-    <>
-      <PageHeader
-        eyebrow="MAILBOX"
-        title={t("收件箱")}
-        description={t("集中查看 {email} 的最新邮件。", { email: props.selectedAccount?.email || t("邮箱账号") })}
-        actions={
-          <>
-            <select className="account-picker" value={props.selectedAccountId || ""} onChange={(event) => props.setSelectedAccountId(Number(event.target.value))}>
-              {props.accounts.map((account) => <option key={account.id} value={account.id}>{account.email}</option>)}
-            </select>
-            <button className="button secondary" onClick={props.reload}><RefreshCw size={16} /> {t("同步")}</button>
-            <button className="button primary" onClick={props.openCompose} disabled={!props.canSend} title={!props.canSend ? t("游客模式仅支持收件") : ""}><Plus size={16} /> {t("写邮件")}</button>
-          </>
-        }
-      />
-
-      <section className="stats-grid">
-        <div className="stat-card"><div className="stat-icon blue"><Inbox size={18} /></div><span>{t("当前文件夹")}</span><strong>{props.total}</strong><small>{t("封邮件")}</small></div>
-        <div className="stat-card"><div className="stat-icon violet"><Sparkles size={18} /></div><span>{t("未读邮件")}</span><strong>{unread}</strong><small>{t("当前页")}</small></div>
-        <div className="stat-card"><div className="stat-icon green"><AtSign size={18} /></div><span>{t("邮箱账号")}</span><strong>{props.accounts.length}</strong><small>{t("已安全连接")}</small></div>
-      </section>
-
-      <section className="mail-panel">
-        <aside className="folder-column">
-          <span className="column-label">{t("文件夹")}</span>
-          {props.visibleFolders.map((folder) => {
-            const Icon = folder.icon;
-            return (
-              <button
-                key={folder.label}
-                className={props.selectedFolder === folder.path ? "active" : ""}
-                disabled={!folder.available}
-                onClick={() => props.setSelectedFolder(folder.path)}
-              >
-                <Icon size={17} /> {t(folder.label)}
-                {folder.specialUse === "\\Inbox" && <em>{unread || ""}</em>}
-              </button>
-            );
-          })}
-          <div className="folder-tip"><Cloud size={17} /><div><strong>{t("实时连接")}</strong><span>{t("邮件正文按需读取，不会整库缓存。")}</span></div></div>
-        </aside>
-
+    <section className="mail-panel">
         <div className="message-column">
-          <div className="column-head"><div><strong>{t("邮件列表")}</strong><span>{props.total} {t("封邮件")}</span></div><button><MoreHorizontal size={17} /></button></div>
+          <div className="column-head"><div><strong>{t("邮件列表")}</strong><span>{props.total} {t("封邮件")}</span></div><button onClick={props.reload} aria-label={t("同步")}><RefreshCw size={16} /></button></div>
           <div className="message-list">
             {props.loading && <div className="loading-state"><RefreshCw className="spin" size={20} /> {t("正在同步邮件…")}</div>}
-            {!props.loading && !props.messages.length && <div className="empty-list"><MailIcon size={24} /><strong>{t("这里还没有邮件")}</strong><span>{t("尝试同步或切换其他文件夹")}</span></div>}
+            {!props.loading && !props.messages.length && <div className="empty-list"><img className="state-plane-logo small" src={brandLogoUrl} alt="" /><strong>{t("这里还没有邮件")}</strong><span>{t("尝试同步或切换其他文件夹")}</span></div>}
             {!props.loading && props.messages.map((message) => (
               <button
                 key={message.uid}
@@ -583,21 +521,20 @@ function InboxPage(props: {
 
         <article className="reader-column">
           {props.detailLoading && <div className="reader-empty"><RefreshCw className="spin" size={22} /><span>{t("正在打开邮件…")}</span></div>}
-          {!props.detailLoading && !props.selectedMessage && <div className="reader-empty"><div className="reader-illustration"><MailIcon size={30} /></div><strong>{t("选择一封邮件")}</strong><span>{t("邮件正文将在这里安全显示")}</span></div>}
+          {!props.detailLoading && !props.selectedMessage && <div className="reader-empty"><div className="reader-illustration"><img className="state-plane-logo" src={brandLogoUrl} alt="" /></div><strong>{t("选择一封邮件")}</strong><span>{t("邮件正文将在这里安全显示")}</span></div>}
           {!props.detailLoading && props.selectedMessage && <MessageReader message={props.selectedMessage} onClose={props.closeMessage} />}
         </article>
-      </section>
-    </>
+    </section>
   );
 }
 
 function MessageReader({ message, onClose }: { message: MessageDetail; onClose: () => void }) {
   const { language, t } = useI18n();
-  const srcDoc = `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: cid:; style-src 'unsafe-inline'; font-src 'none'; connect-src 'none'; media-src 'none'; frame-src 'none'"><meta name="viewport" content="width=device-width"><style>body{font:14px/1.65 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;color:#222;margin:0;padding:4px 2px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%!important}a{color:#2563eb}.mail-remote-image-blocked{display:inline-block;padding:6px 8px;border:1px solid #ddd;border-radius:6px;color:#777;font-size:12px}</style></head><body>${message.html || `<pre style="white-space:pre-wrap;font:inherit">${escapeHtml(message.text)}</pre>`}</body></html>`;
+  const srcDoc = `<!doctype html><html lang="${language}"><head><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src 'none'; connect-src 'none'; media-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'"><meta name="color-scheme" content="light only"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:#fff}body{color:#202124;font:14px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',Arial,sans-serif;overflow-wrap:anywhere;-webkit-text-size-adjust:100%}.mail-document{width:100%;max-width:900px;margin:0 auto;padding:34px clamp(22px,4.5vw,56px) 72px}.mail-document> :first-child{margin-top:0!important}.mail-document> :last-child{margin-bottom:0!important}img{max-width:100%!important;height:auto!important;object-fit:contain}table{max-width:100%!important}td,th{overflow-wrap:break-word}a{color:#2563eb;text-decoration-thickness:1px;text-underline-offset:2px}.mail-image-unavailable{display:inline-flex;align-items:center;max-width:100%;margin:2px 0;padding:7px 10px;border:1px solid #e5e7eb;border-radius:7px;background:#f8fafc;color:#64748b;font-size:12px;line-height:1.4}blockquote{margin-inline:0;padding-left:14px;border-left:3px solid #e5e7eb;color:#52525b}pre{margin:0;white-space:pre-wrap;font:inherit}@media(max-width:640px){.mail-document{padding:24px 16px 48px}td,th{max-width:100%!important}}</style></head><body><main class="mail-document">${message.html || `<pre>${escapeHtml(message.text)}</pre>`}</main></body></html>`;
   return (
     <>
       <div className="reader-head">
-        <div className="reader-tools"><button className="reader-back" onClick={onClose} aria-label="返回邮件列表"><ArrowLeft size={16} /></button><span className="reader-tool-spacer" /><button><Archive size={16} /></button><button><Trash2 size={16} /></button><button><Star size={16} /></button></div>
+        <div className="reader-tools"><button className="reader-back" onClick={onClose} aria-label={t("返回邮件列表")}><ArrowLeft size={16} /></button><span className="reader-tool-spacer" /><button aria-label={t("归档")}><Archive size={16} /></button><button aria-label={t("删除")}><Trash2 size={16} /></button><button aria-label={t("标记星标")}><Star size={16} /></button></div>
         <h2>{message.subject}</h2>
         <div className="reader-sender"><span className="sender-avatar large">{initials(message.from)}</span><div><strong>{message.from}</strong><span>{t("发送给 {to}", { to: message.to || "me" })}</span></div><time>{formatDate(message.date, true, language === "en" ? "en-US" : "zh-CN")}</time></div>
       </div>
@@ -622,8 +559,11 @@ function AccountsPage({ accounts, openImport, notify, reload, authorize }: { acc
   const { language, t } = useI18n();
   const test = async (account: Account) => {
     try {
-      const result = await api<{ canSend: boolean | null }>(`/api/accounts/${account.id}/test`, { method: "POST" });
-      notify(result.canSend === false ? "收件连接正常，但当前令牌缺少 SMTP.Send 发件权限" : "收件连接与授权状态正常", result.canSend === false ? "error" : "success");
+      const result = await api<{ canSend: boolean | null; receiveTransport?: "imap" | "outlook-rest" }>(`/api/accounts/${account.id}/test`, { method: "POST" });
+      const receiveMessage = result.receiveTransport === "outlook-rest"
+        ? "IMAP 当前不可用，已自动切换到 Outlook API 收件"
+        : "收件连接正常";
+      notify(result.canSend === false ? `${receiveMessage}，但当前令牌缺少 SMTP.Send 发件权限` : `${receiveMessage}，发件授权正常`, result.canSend === false ? "error" : "success");
       reload();
     } catch (error) {
       notify(error instanceof Error ? error.message : "连接测试失败", "error");
