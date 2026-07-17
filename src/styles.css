@@ -498,8 +498,8 @@ button { color: inherit; }
 .compose-emoji-popover { position: fixed; z-index: 60; width: min(286px, calc(100vw - 24px)); display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; padding: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: 0 16px 46px rgba(0,0,0,.18); animation: menu-pop .14s ease; }
 .compose-emoji-popover > button { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; font-size: 17px; }
 .compose-emoji-popover > button:hover { background: var(--surface-soft); transform: scale(1.08); }
-.compose-format-more-popover { position: fixed; z-index: 60; width: min(190px, calc(100vw - 24px)); display: grid; gap: 3px; padding: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 14px 40px rgba(0,0,0,.16); animation: menu-pop .14s ease; }
-.compose-format-more-popover > button { min-height: 34px; display: flex; align-items: center; gap: 9px; padding: 0 9px; border: 0; border-radius: 6px; color: var(--foreground); background: transparent; font-size: 10px; text-align: left; }
+.compose-format-more-popover { position: fixed; z-index: 60; width: min(150px, calc(100vw - 24px)); display: grid; gap: 2px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 14px 40px rgba(0,0,0,.16); animation: menu-pop .14s ease; }
+.compose-format-more-popover > button { width: 100%; min-height: 30px; display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 0 8px; border: 0; border-radius: 5px; color: var(--foreground); background: transparent; font-size: 9px; text-align: left; }
 .compose-format-more-popover > button:hover { background: var(--surface-soft); }
 .compose-attachments { min-height: 46px; display: flex; align-items: center; gap: 8px; flex: none; padding: 6px 0; overflow-x: auto; border-bottom: 1px solid var(--border); color: var(--muted); scrollbar-width: none; }
 .compose-attachments::-webkit-scrollbar { display: none; }

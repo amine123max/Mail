@@ -269,7 +269,7 @@ export function ComposePage({
     }
     const rect = formatMoreButtonRef.current?.getBoundingClientRect();
     if (rect) {
-      const panelWidth = Math.min(190, window.innerWidth - 24);
+      const panelWidth = Math.min(150, window.innerWidth - 24);
       setFormatMorePosition({
         left: Math.max(12, Math.min(rect.right - panelWidth, window.innerWidth - panelWidth - 12)),
         top: Math.min(rect.bottom + 5, window.innerHeight - 245),
