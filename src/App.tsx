@@ -1204,10 +1204,12 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
       : `M ${startX} ${startY} C ${width * .2} ${startY + height * .05}, ${width * .06} ${height * .36}, ${width * .07} ${height * .63} C ${width * .08} ${height * .88}, ${width * .72} ${height * .94}, ${width * .92} ${height * .68} C ${width * .98} ${height * .48}, ${width * .87} ${height * .17}, ${width * .55} ${height * .1} C ${width * .25} ${height * .04}, ${width * .18} ${height * .28}, ${endX} ${endY}`;
     setFlightPath(path);
     setSuccessTransition(true);
-    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const duration = reduceMotion ? .52 : 2.8;
+    // Keep the branded flight cadence consistent across desktop and mobile.
+    // Some mobile browsers report reduced motion implicitly, which previously
+    // shortened this transition enough to look like the plane had jumped.
+    const duration = 2.8;
     setFlightDuration(duration);
-    const landingHold = reduceMotion ? 80 : 320;
+    const landingHold = 420;
     successTimerRef.current = window.setTimeout(complete, duration * 1000 + landingHold);
   };
 
