@@ -1,123 +1,180 @@
 <p align="center">
-  <img src="public/paper-plane-logo.png" width="92" alt="Mail logo" />
+  <img src="public/paper-plane-logo.png" width="96" alt="Mail paper-plane logo" />
 </p>
 
 <h1 align="center">Mail</h1>
 
 <p align="center">
-  A secure, multi-user web workspace for Outlook, Hotmail, and Live mailboxes.
+  A private, self-hosted workspace for managing Outlook, Hotmail, and Live mailboxes.
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> ·
+  <a href="https://www.aillive.xyz/mail/"><strong>Live Demo</strong></a>
+  ·
   <a href="README.zh-CN.md">简体中文</a>
+  ·
+  <a href="SECURITY.md">Security</a>
+  ·
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Node.js-24-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 24" />
+  <img src="https://img.shields.io/badge/release-v1.0.0-111111?style=flat-square" alt="Release v1.0.0" />
+  <img src="https://img.shields.io/badge/Node.js-24+-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 24+" />
   <img src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=111827" alt="React 18" />
-  <img src="https://img.shields.io/badge/SQLite-Encrypted-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
+  <img src="https://img.shields.io/badge/SQLite-local-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
   <img src="https://img.shields.io/badge/Microsoft-OAuth2-5E5E5E?style=flat-square&logo=microsoft&logoColor=white" alt="Microsoft OAuth2" />
-  <img src="https://img.shields.io/badge/License-MIT-166534?style=flat-square" alt="MIT License" />
+  <img src="https://img.shields.io/badge/license-MIT-166534?style=flat-square" alt="MIT License" />
 </p>
 
-![Mail dashboard](docs/images/dashboard.png)
+![Mail desktop workspace](docs/images/dashboard.png)
 
-Mail is a self-hosted mailbox manager for receiving, reading, and sending email across Outlook, Hotmail, and Live accounts. It combines Microsoft OAuth2, IMAP, SMTP, and Microsoft Graph with an encrypted SQLite data layer and a responsive interface inspired by the visual language of [wr.do](https://github.com/oiov/wr.do).
+Mail brings receiving, reading, organizing, and sending email into one responsive web application. It combines Microsoft OAuth2, IMAP, SMTP, Microsoft Graph, and an owner-scoped SQLite data layer without sending mailbox credentials to a third-party service.
 
-The project is designed around privacy boundaries: every account belongs to an authenticated user or an isolated guest session, credentials are encrypted before persistence, cookies never contain mailbox passwords or tokens, and remote tracking resources in email HTML are blocked by default.
+The interface is designed for desktop and mobile use, supports English and Chinese, includes light and dark themes, and provides a dedicated administration workspace for users, activity, and announcements.
 
-## Highlights
+## Why Mail
 
-- Multi-account Outlook, Hotmail, and Live mailbox management.
-- IMAP XOAUTH2 receiving with folder, list, search, and message-body views.
-- SMTP OAuth2 sending with Microsoft Graph `Mail.Send` fallback.
-- Multi-user registration with strict owner-scoped SQLite queries.
-- Receive-only guest mode with a long-lived, signed HttpOnly cookie.
-- Automatic guest-to-user account migration after sign-in or registration.
-- AES-256-GCM encryption for passwords, Client IDs, and refresh tokens.
-- Chinese and English interfaces with local Bahamas Bold and Satoshi fonts.
-- Responsive desktop, tablet, and mobile layouts with light and dark themes.
-- Docker deployment, production security gates, rate limits, and regression tests.
+| | Capability | What it provides |
+| --- | --- | --- |
+| ✉️ | Unified mailbox | Inbox, sent mail, drafts, archive, trash, search, and message reading across multiple accounts. |
+| 🔐 | Private by design | Passwords, Client IDs, and refresh tokens are encrypted with AES-256-GCM before SQLite persistence. |
+| 🚀 | OAuth2 transport | IMAP XOAUTH2 receiving, SMTP OAuth2 sending, and Microsoft Graph `Mail.Send` fallback. |
+| 👥 | Multi-user isolation | Every query is scoped to an authenticated user or an isolated guest session. |
+| 🧭 | Complete account workflow | Batch import/export, grouping, ordering, testing, deletion, and Device Code authorization. |
+| 📱 | Responsive interface | Purpose-built desktop and mobile layouts, resizable message panes, themes, and bilingual UI. |
+| 🛡️ | Administration | First-run administrator setup, user overview, site activity, and announcement delivery. |
+| 🍪 | Persistent guest mode | Receive-only guest sessions remain available through a signed HttpOnly browser cookie. |
 
-## Screenshots
+## Product tour
 
-| Sign in | Email-verified registration |
-| --- | --- |
-| ![Mail sign in](docs/images/login.png) | ![Mail registration](docs/images/register.png) |
-| Mail workspace | Account management |
-| ![Mail workspace](docs/images/dashboard.png) | ![Mail account management](docs/images/accounts.png) |
-| System settings | |
-| ![Mail system settings](docs/images/settings.png) | |
+All screenshots use fictional demonstration data. No production mailbox, token, or user information is included.
 
-The navigation follows a structured mailbox workflow:
+### Account management
 
-- **Mail:** Inbox, Sent, Drafts, Archive, Trash.
-- **Manage:** Accounts, account import, Microsoft authorization.
-- **System:** Security settings and interface language.
+![Mail account management](docs/images/accounts.png)
+
+### Focused compose workspace
+
+![Mail compose workspace](docs/images/compose.png)
+
+### Microsoft authorization
+
+![Mail Microsoft authorization](docs/images/oauth.png)
+
+### Administration
+
+![Mail administrator overview](docs/images/admin.png)
+
+<table>
+  <tr>
+    <th>Secure sign in</th>
+    <th>Verified registration</th>
+  </tr>
+  <tr>
+    <td><img src="docs/images/login.png" alt="Mail sign-in page" /></td>
+    <td><img src="docs/images/register.png" alt="Mail registration page" /></td>
+  </tr>
+  <tr>
+    <th>System settings</th>
+    <th>Mobile compose</th>
+  </tr>
+  <tr>
+    <td><img src="docs/images/settings.png" alt="Mail settings" /></td>
+    <td align="center"><img src="docs/images/mobile.png" width="320" alt="Mail mobile compose workspace" /></td>
+  </tr>
+</table>
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  B[React Web UI] -->|signed HttpOnly cookie| A[Express API]
-  A --> I[Identity and owner scope]
-  I --> U[Authenticated user]
-  I --> G[Isolated guest session]
-  A --> D[(SQLite)]
-  D --> E[AES-256-GCM encrypted credentials]
-  A --> O[Microsoft OAuth2]
-  O --> M[IMAP receive]
-  O --> S[SMTP send]
-  O --> X[Graph send fallback]
+  Browser[React web app] -->|Signed HttpOnly cookie| API[Express API]
+  API --> Identity{Owner scope}
+  Identity --> User[Authenticated user]
+  Identity --> Guest[Isolated guest]
+  API --> DB[(SQLite)]
+  DB --> Vault[AES-256-GCM credentials]
+  API --> OAuth[Microsoft OAuth2]
+  OAuth --> IMAP[IMAP receive]
+  OAuth --> SMTP[SMTP send]
+  OAuth --> Graph[Graph send fallback]
 ```
 
 ### Mail transport
 
-| Capability | Primary path | Fallback / behavior |
+| Operation | Primary path | Fallback / behavior |
 | --- | --- | --- |
-| Receive | IMAP XOAUTH2 | Explicit Outlook IMAP resource scope |
-| Send | SMTP OAuth2 | Microsoft Graph `Mail.Send` when SMTP AUTH is disabled |
-| Token lifecycle | OAuth2 refresh token | Rotated tokens are encrypted and persisted immediately |
-| Message HTML | Sanitized sandbox iframe | Scripts and remote tracking resources are blocked |
+| Receive | IMAP over TLS with XOAUTH2 | Outlook IMAP resource scope |
+| Send | SMTP over STARTTLS with OAuth2 | Microsoft Graph `Mail.Send` when SMTP AUTH is unavailable |
+| Refresh | Microsoft refresh token | Rotated tokens are encrypted and persisted immediately |
+| Render HTML | Sanitized sandbox iframe | Scripts, unsafe URLs, and remote tracking resources are blocked |
 
-### Data isolation
+### Privacy boundaries
 
-Every account row has an `owner_key` such as `user:<id>` or `guest:<id>`. List, read, update, delete, token rotation, and sync operations always include that owner scope. Guest credentials remain encrypted on the server; the browser receives only a signed session identifier.
+- Account records use an `owner_key` such as `user:<id>` or `guest:<id>`.
+- List, read, update, delete, sync, flag, move, and export operations always include the owner scope.
+- Cookies contain only a signed session identifier—never a mailbox password, Client ID, or refresh token.
+- Credentials are encrypted before being written to SQLite.
+- Guest accounts can be migrated into the user's private namespace after sign-in or registration.
+- Original email HTML is sanitized and displayed in a sandboxed frame.
 
-## Quick Start
+## Quick start
 
 ### Requirements
 
 - Node.js 24+
 - npm 11+
-- Network access to Microsoft OAuth2, IMAP, SMTP, and Graph endpoints
+- Network access to Microsoft OAuth2, Outlook IMAP/SMTP, and Microsoft Graph
 
 ```bash
-git clone <your-repository-url>
+git clone https://github.com/amine123max/Mail.git
 cd Mail
 npm install
+cp .env.example .env
 npm run dev
 ```
 
 Open [http://localhost:5173](http://localhost:5173).
 
-When the database has no users, Mail automatically opens a one-time administrator setup screen. Enter an administrator username, email address, and a password of at least 12 characters, then confirm the six-digit code delivered by email. The code expires after five minutes, and the setup endpoint closes permanently after success.
+On a fresh database, Mail opens a one-time administrator setup screen. Configure the verification SMTP variables in `.env`, then enter the administrator email, display name, password, and six-digit verification code. Codes expire after five minutes.
 
-Configure `MAIL_VERIFICATION_SMTP_*` in `.env` before requesting a code. The API binds to `127.0.0.1` by default.
+## Configuration
 
-## Account Import
+| Variable | Purpose | Production guidance |
+| --- | --- | --- |
+| `MAIL_SESSION_SECRET` | Signs login and guest cookies | Required; use at least 32 random characters |
+| `MAIL_ENCRYPTION_KEY` | Encrypts stored mailbox credentials | Required; 32-byte Base64 or 64-character hex |
+| `MAIL_DATA_DIR` | SQLite and local data directory | Mount a persistent, private directory |
+| `MAIL_VERIFICATION_SMTP_HOST` | Verification email SMTP host | Required for registration and first-run setup |
+| `MAIL_VERIFICATION_SMTP_PORT` | Verification SMTP port | Usually `587` or `465` |
+| `MAIL_VERIFICATION_SMTP_SECURE` | Direct TLS mode | Use `1` for port `465`, otherwise `0` |
+| `MAIL_VERIFICATION_SMTP_USER` | Verification SMTP username | Store as a deployment secret |
+| `MAIL_VERIFICATION_SMTP_PASSWORD` | SMTP password / app password | Store as a deployment secret |
+| `MAIL_VERIFICATION_FROM` | Verification sender identity | Required in production |
+| `VITE_BASE_PATH` | Frontend deployment base | `/` or a subpath such as `/mail/` |
+| `MAIL_COOKIE_PATH` | Session cookie scope | Match the deployment path, for example `/mail` |
+| `HOST` / `PORT` | API bind address and port | Bind to loopback behind a reverse proxy |
+| `MAIL_TRUST_PROXY` | Trust reverse-proxy headers | Set to `1` only behind a trusted proxy |
 
-Import one account per line with either a real Tab separator or four hyphens:
+Generate an encryption key:
+
+```bash
+openssl rand -base64 32
+```
+
+## Import mailbox accounts
+
+Import one mailbox per line. Mail accepts a real Tab separator or four hyphens:
 
 ```text
 email<TAB>password<TAB>client_id<TAB>refresh_token
 email----password----client_id----refresh_token
 ```
 
-The password field is retained for compatibility with existing account exports. Mail transport uses OAuth2 access tokens derived from the Client ID and refresh token.
+The password field is retained for compatibility with existing exports. Microsoft mail transport uses OAuth2 access tokens derived from the Client ID and refresh token.
 
-## Microsoft Authorization
+## Microsoft authorization
 
 The built-in Device Code flow requests the permissions required by the hybrid transport:
 
@@ -128,172 +185,91 @@ https://graph.microsoft.com/Mail.Send
 offline_access
 ```
 
-Some Outlook mailboxes disable SMTP AUTH even when `SMTP.Send` is present. In that case, Mail automatically attempts Microsoft Graph delivery.
+Mail never asks the user to enter a Microsoft password. The user completes authorization on Microsoft's verification page, and the resulting token is encrypted locally.
 
-## Guest Mode
+## Browser routes
 
-Guest mode is intended for temporary or device-local receiving workflows:
-
-- Guests can import up to three mailboxes and receive/read messages.
-- Guests cannot send email; the API enforces this with `403 GUEST_SEND_DISABLED`.
-- The guest cookie is signed, HttpOnly, SameSite=Strict, and renewed while in use.
-- Passwords and tokens are never stored in cookies.
-- Signing in or registering transfers guest accounts into the user's private namespace and invalidates the old guest session.
-- Explicit sign-out deletes the guest cache immediately.
-
-## Browser Routes
-
-Mail exposes stable English browser paths and supports direct access, refresh, and browser back/forward navigation:
+Stable English paths support direct access, refresh, and browser history:
 
 | Path | View |
 | --- | --- |
-| `/mail/inbox` | Inbox |
-| `/mail/sent` | Sent mail |
-| `/mail/drafts` | Drafts |
-| `/mail/archive` | Archive |
-| `/mail/trash` | Trash |
-| `/mail/sendmails` | Compose mail |
-| `/mail/accounts` | Mailbox accounts |
-| `/mail/import` | Account import |
-| `/mail/oauth` | Microsoft authorization |
-| `/mail/settings` | Settings |
+| `/inbox` | Inbox |
+| `/sent` | Sent mail |
+| `/drafts` | Drafts |
+| `/archive` | Archive |
+| `/trash` | Trash |
+| `/sendmails` | Compose workspace |
+| `/accounts` | Account management |
+| `/import` | Account import |
+| `/oauth` | Microsoft authorization |
+| `/settings` | System settings |
+| `/admin` | Administrator overview |
 
-The legacy `/mail/` entry point remains available and opens the inbox. When Mail is deployed at the domain root, the same routes are available without the `/mail` prefix.
+When deployed below `/mail`, the same routes become `/mail/inbox`, `/mail/sendmails`, and so on.
 
-## Production Deployment
-
-Create a `.env` file from the template and provide strong secrets:
+## Production deployment
 
 ```bash
-cp .env.example .env
+npm ci
 npm run build
-npm start
+NODE_ENV=production npm start
 ```
 
-Required production values:
-
-| Variable | Purpose | Requirement |
-| --- | --- | --- |
-| `MAIL_SESSION_SECRET` | Cookie signature key | 32+ characters |
-| `MAIL_ENCRYPTION_KEY` | AES-256 credential key | 32-byte Base64 or 64-char hex |
-| `MAIL_VERIFICATION_SMTP_HOST` | Verification SMTP host | Required in production |
-| `MAIL_VERIFICATION_SMTP_PORT` | Verification SMTP port | Defaults to `587` |
-| `MAIL_VERIFICATION_SMTP_SECURE` | SMTP TLS mode | Usually `1` for port 465 |
-| `MAIL_VERIFICATION_SMTP_USER` | SMTP username | Configure together with password |
-| `MAIL_VERIFICATION_SMTP_PASSWORD` | SMTP password or app password | Store as a secret |
-| `MAIL_VERIFICATION_FROM` | Verification sender address | Required in production |
-| `VITE_BASE_PATH` | Frontend build base path | `/` at root or `/mail/` for a subpath |
-| `MAIL_COOKIE_PATH` | Session cookie path | Match the deployment path, for example `/mail` |
-| `MAIL_BIND_PORT` | Docker loopback bind port | Defaults to `3000` |
-| `HOST` | API bind address | `127.0.0.1` by default |
-| `PORT` | API port | `3000` in production |
-| `MAIL_DATA_DIR` | SQLite data directory | Defaults to `./data` |
-| `MAIL_TRUST_PROXY` | Trust one reverse-proxy hop | Set to `1` only behind a trusted proxy |
-
-Generate an encryption key:
+For Docker:
 
 ```bash
-openssl rand -base64 32
-```
-
-### Docker Compose
-
-```bash
-export MAIL_SESSION_SECRET='replace-with-a-long-random-session-secret'
-export MAIL_ENCRYPTION_KEY="$(openssl rand -base64 32)"
-export MAIL_VERIFICATION_SMTP_HOST='smtp.example.com'
-export MAIL_VERIFICATION_SMTP_USER='mail@example.com'
-export MAIL_VERIFICATION_SMTP_PASSWORD='replace-with-an-smtp-app-password'
-export MAIL_VERIFICATION_FROM='Mail <mail@example.com>'
 docker compose up -d --build
 ```
 
-Docker Compose refuses to start when required secrets are missing. The runtime container uses the non-root `node` user.
+For an Nginx subpath deployment, build with `VITE_BASE_PATH=/mail/`, set `MAIL_COOKIE_PATH=/mail`, and keep the trailing slash in:
 
-The first administrator can also be provisioned once through standard input:
-
-```bash
-printf '%s' '{"username":"admin","email":"admin@example.com","password":"replace-with-a-strong-password"}' \
-  | docker compose exec -T mail npm run bootstrap-admin
+```nginx
+location /mail/ {
+  proxy_pass http://127.0.0.1:3000/;
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
 ```
 
-For an Nginx `/mail` deployment, use a trailing slash in `proxy_pass http://127.0.0.1:3000/;` so the external subpath is removed before requests reach Express.
+Do not commit `.env`, SQLite files, master keys, backups, passwords, or mailbox tokens.
 
-## Security Model
+## Verification
 
-- Owner-scoped account CRUD prevents cross-user mailbox access.
-- User sessions are validated against a server-side session table and can be revoked.
-- Guest sessions are server-side records referenced by signed cookies.
-- Email addresses, passwords, Client IDs, and refresh tokens use AES-256-GCM authenticated encryption; email deduplication uses a blind HMAC index.
-- API responses use `Cache-Control: no-store`.
-- First deployment uses a one-time administrator setup. Later registrations require a five-minute email code, allow at most five wrong attempts, and enforce a 60-second resend cooldown.
-- Production startup requires strong session and encryption secrets plus a configured verification SMTP service.
-- Email HTML is sanitized and rendered with sandbox and iframe CSP restrictions.
-- Remote HTTP images are removed to block tracking pixels.
-- Main responses include CSP, frame protection, no-referrer, MIME protection, and permissions policy headers.
-- Authentication and sending endpoints use rate limits and account quotas.
+```bash
+npm run typecheck
+npm test
+npm run build
+npm audit --omit=dev
+```
 
-See [SECURITY.md](SECURITY.md) for deployment guidance and vulnerability reporting.
+The regression suite covers account import/export, browser routes, first-run setup, five-minute email verification, announcement delivery, safe HTML rendering, and multi-tenant account isolation.
 
-> [!IMPORTANT]
-> Never paste real mailbox passwords or refresh tokens into public issues, commits, screenshots, or chat transcripts. If a credential is exposed, rotate the password and revoke/re-authorize the refresh token immediately.
-
-## Repository Layout
+## Project structure
 
 ```text
 Mail/
-├── server/                 # Express API, SQLite, auth, OAuth2, IMAP/SMTP/Graph
-├── src/                    # React interface, dialogs, localization, styles
-├── public/                 # Brand assets and local fonts
-├── docs/images/            # GitHub preview screenshots
-├── data/                   # Runtime SQLite and local development key (ignored)
+├── src/                 React application and responsive UI
+├── src/components/      Compose and shared interface components
+├── server/              Express API, identity, SQLite, OAuth2, IMAP, SMTP
+├── public/              Brand assets and local fonts
+├── docs/images/         README screenshots
 ├── Dockerfile
 ├── docker-compose.yml
-├── README.md
-└── README.zh-CN.md
+└── .env.example
 ```
-
-## Development and Tests
-
-```bash
-npm run dev        # Start Vite and the API in watch mode
-npm run typecheck  # Type-check the client and server
-npm test           # Parser, encryption, and tenant-isolation tests
-npm run build      # Build the production client and server
-npm start          # Start the built server
-npm audit          # Review dependency vulnerabilities
-```
-
-Current regression coverage includes:
-
-- Tab and `----` account import parsing.
-- Cross-owner list, read, update, and delete isolation.
-- Guest-to-user account transfer and guest cleanup.
-- AES-GCM ciphertext verification.
-- One-time administrator bootstrap, five-minute verification expiry, attempt limits, and encrypted registration email storage.
-- Dynamic API checks for guest send denial, cookie replay denial, and tenant separation.
-
-## Project Status
-
-Mail is suitable for self-hosted personal and small-team mailbox management when deployed behind HTTPS with strong external secrets. It is not a Microsoft product and is not affiliated with Microsoft.
-
-Planned improvements:
-
-- Attachment download with explicit malware-safe handling.
-- Per-user audit log and active-session management.
-- Optional SQLCipher or external database storage.
-- Mail rules, labels, contacts, and reusable compose templates.
-- Mocked Microsoft transport integration tests for offline CI.
 
 ## Acknowledgements
 
-- [CN-Root/OutlookPanel](https://github.com/CN-Root/OutlookPanel) for the four-field import and Outlook OAuth2 workflow reference.
-- [oiov/wr.do](https://github.com/oiov/wr.do) for dashboard layout and visual-language inspiration.
-- [amine123max/OceanSim](https://github.com/amine123max/OceanSim) for the release-oriented README structure.
+- [CN-Root/OutlookPanel](https://github.com/CN-Root/OutlookPanel) — Outlook account import and mailbox workflow reference.
+- [oiov/wr.do](https://github.com/oiov/wr.do) — visual language and navigation inspiration.
+- [Lucide](https://lucide.dev/) — interface icons.
 
-## Contributing
+Mail is an independent project and is not affiliated with or endorsed by Microsoft.
 
-Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+## Security
+
+Please read [SECURITY.md](SECURITY.md) before deploying publicly. Report security issues privately rather than opening a public issue containing credentials, tokens, logs, or mailbox content.
 
 ## License
 
