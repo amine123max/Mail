@@ -2,6 +2,7 @@ export interface Account {
   id: number;
   email: string;
   remark: string;
+  group: string;
   createdAt: string;
   updatedAt: string;
   lastSyncAt: string | null;

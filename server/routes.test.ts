@@ -13,15 +13,17 @@ describe("Mail browser routes", () => {
     });
     assert.deepEqual(routeForSegment("sendmails"), {
       segment: "sendmails",
-      page: "inbox",
+      page: "compose",
       folder: null,
-      dialog: "compose",
+      dialog: null,
       known: true,
     });
     assert.equal(routeForSegment("accounts").page, "accounts");
     assert.equal(routeForSegment("import").dialog, "import");
-    assert.equal(routeForSegment("oauth").dialog, "oauth");
+    assert.equal(routeForSegment("oauth").page, "oauth");
     assert.equal(routeForSegment("settings").page, "settings");
+    assert.equal(routeForSegment("admin").page, "admin");
+    assert.equal(routeForSegment("users").page, "users");
   });
 
   it("parses routes below the configured deployment base", () => {

@@ -7,6 +7,7 @@ export interface StoredAccountRow {
   client_id_encrypted: string;
   refresh_token_encrypted: string;
   remark: string;
+  group_name: string;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -45,7 +46,17 @@ export interface PublicAccount {
   id: number;
   email: string;
   remark: string;
+  group: string;
   createdAt: string;
   updatedAt: string;
   lastSyncAt: string | null;
+}
+
+export interface AdminUserSummary {
+  id: number;
+  username: string;
+  email: string;
+  administrator: boolean;
+  accountCount: number;
+  createdAt: string;
 }

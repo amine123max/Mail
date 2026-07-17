@@ -14,9 +14,11 @@ import {
   Download,
   EllipsisVertical,
   FilePenLine,
+  FolderCog,
   Inbox,
   KeyRound,
   Languages,
+  LayoutDashboard,
   LockKeyhole,
   LogOut,
   Mail,
@@ -35,7 +37,9 @@ import {
   Star,
   Sun,
   Trash2,
+  Upload,
   UserRound,
+  UserCog,
   Users,
   X,
 } from "lucide-react";
@@ -51,9 +55,9 @@ import {
   type MessageSummary,
 } from "./api";
 import { AnnouncementDialog } from "./components/AnnouncementDialog";
-import { ComposeDialog } from "./components/ComposeDialog";
+import { ComposePage, type ComposeAttachment } from "./components/ComposePage";
 import { ImportDialog } from "./components/ImportDialog";
-import { OAuthDialog } from "./components/OAuthDialog";
+import { OAuthPage } from "./components/OAuthPage";
 import { useI18n } from "./i18n";
 import {
   mailPath,
@@ -67,6 +71,9 @@ import {
 
 type Toast = { id: number; message: string; type: "success" | "error" };
 type CurrentUser = { username: string; administrator: boolean };
+type AdminStats = { users: number; mailboxAccounts: number; activeGuests: number; announcements: number };
+type AdminUserSummary = { id: number; username: string; email: string; administrator: boolean; accountCount: number; createdAt: string };
+type AdminActivityPoint = { date: string; users: number; accounts: number; guests: number; announcements: number };
 type PendingSend = {
   id: string;
   accountId: number;
@@ -118,11 +125,15 @@ function mailboxAddresses(value: string): string {
   return plain?.length ? Array.from(new Set(plain)).join(", ") : value;
 }
 
-async function downloadAccountsFile(ids: number[]): Promise<void> {
-  const result = await api<{ filename: string; content: string }>("/api/accounts/export", {
+async function requestAccountsFile(ids: number[]): Promise<{ filename: string; content: string }> {
+  return api<{ filename: string; content: string }>("/api/accounts/export", {
     method: "POST",
     body: JSON.stringify({ ids }),
   });
+}
+
+async function downloadAccountsFile(ids: number[]): Promise<void> {
+  const result = await requestAccountsFile(ids);
   const blob = new Blob([result.content], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -215,6 +226,8 @@ function App() {
   const [accountDeleteLoading, setAccountDeleteLoading] = useState(false);
   const [accountDrag, setAccountDrag] = useState<AccountDragState | null>(null);
   const accountDragTimerRef = useRef<number | null>(null);
+  const accountDragFrameRef = useRef<number | null>(null);
+  const accountDragPointerRef = useRef<{ x: number; y: number } | null>(null);
   const accountDragGestureRef = useRef<{
     id: number;
     startY: number;
@@ -224,12 +237,12 @@ function App() {
   const accountClickBlockUntilRef = useRef(0);
   const [mailPage, setMailPage] = useState(1);
   const [importOpen, setImportOpen] = useState(initialRoute.dialog === "import");
-  const [composeOpen, setComposeOpen] = useState(initialRoute.dialog === "compose");
-  const [oauthOpen, setOauthOpen] = useState(initialRoute.dialog === "oauth");
   const [oauthAccount, setOauthAccount] = useState<Account | null>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [mobileNavClosing, setMobileNavClosing] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [appEntering, setAppEntering] = useState(false);
+  const [appRevealReady, setAppRevealReady] = useState(false);
   const [dark, setDark] = useState(() => localStorage.getItem("mail-theme") === "dark");
   const [mailFontScale, setMailFontScale] = useState(() => {
     const stored = Number(localStorage.getItem("mail-list-font-scale"));
@@ -260,9 +273,7 @@ function App() {
       setSelectedFolderRoute(route.folder);
       setMailPage(1);
     }
-    setComposeOpen(route.dialog === "compose");
     setImportOpen(route.dialog === "import");
-    setOauthOpen(route.dialog === "oauth");
     setSelectedMessage(null);
     closeMobileNav();
   }, [closeMobileNav]);
@@ -340,6 +351,28 @@ function App() {
   }, [mailFontScale]);
 
   useEffect(() => {
+    if (!appEntering) return;
+    setAppRevealReady(false);
+    let secondFrame = 0;
+    let revealTimer = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        revealTimer = window.setTimeout(() => setAppRevealReady(true), 140);
+      });
+    });
+    const timer = window.setTimeout(() => {
+      setAppEntering(false);
+      setAppRevealReady(false);
+    }, 1450);
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+      if (revealTimer) window.clearTimeout(revealTimer);
+      window.clearTimeout(timer);
+    };
+  }, [appEntering]);
+
+  useEffect(() => {
     const route = parseMailPath(window.location.pathname, appBasePath);
     if (route.known) {
       window.history.replaceState({ mailRoute: route.segment }, "", window.location.href);
@@ -377,6 +410,12 @@ function App() {
   const clearAccountDragTimer = useCallback(() => {
     if (accountDragTimerRef.current !== null) window.clearTimeout(accountDragTimerRef.current);
     accountDragTimerRef.current = null;
+  }, []);
+
+  const clearAccountDragFrame = useCallback(() => {
+    if (accountDragFrameRef.current !== null) window.cancelAnimationFrame(accountDragFrameRef.current);
+    accountDragFrameRef.current = null;
+    accountDragPointerRef.current = null;
   }, []);
 
   const persistAccountOrder = useCallback(async (ids: number[]) => {
@@ -437,30 +476,37 @@ function App() {
     event.preventDefault();
     event.stopPropagation();
     accountClickBlockUntilRef.current = Date.now() + 1000;
-    setAccountDrag((current) => current ? { ...current, pointerY: event.clientY } : current);
-
-    const targetRow = document
-      .elementsFromPoint(event.clientX, event.clientY)
-      .map((element) => element.closest("[data-account-id]") as HTMLElement | null)
-      .find((element) => element && Number(element.dataset.accountId) !== gesture.id);
-    const targetId = Number(targetRow?.dataset.accountId);
-    if (!Number.isInteger(targetId) || !gesture.order.includes(targetId)) return;
-
-    setAccounts((current) => {
-      const from = current.findIndex((item) => item.id === gesture.id);
-      const to = current.findIndex((item) => item.id === targetId);
-      if (from < 0 || to < 0 || from === to) return current;
-      const next = [...current];
-      const [dragged] = next.splice(from, 1);
-      next.splice(to, 0, dragged);
-      gesture.order = next.map((item) => item.id);
-      return next;
+    accountDragPointerRef.current = { x: event.clientX, y: event.clientY };
+    if (accountDragFrameRef.current !== null) return;
+    accountDragFrameRef.current = window.requestAnimationFrame(() => {
+      accountDragFrameRef.current = null;
+      const pointer = accountDragPointerRef.current;
+      const currentGesture = accountDragGestureRef.current;
+      if (!pointer || !currentGesture?.active) return;
+      setAccountDrag((current) => current ? { ...current, pointerY: pointer.y } : current);
+      const targetRow = document
+        .elementsFromPoint(pointer.x, pointer.y)
+        .map((element) => element.closest("[data-account-id]") as HTMLElement | null)
+        .find((element) => element && Number(element.dataset.accountId) !== currentGesture.id);
+      const targetId = Number(targetRow?.dataset.accountId);
+      if (!Number.isInteger(targetId) || !currentGesture.order.includes(targetId)) return;
+      setAccounts((current) => {
+        const from = current.findIndex((item) => item.id === currentGesture.id);
+        const to = current.findIndex((item) => item.id === targetId);
+        if (from < 0 || to < 0 || from === to) return current;
+        const next = [...current];
+        const [dragged] = next.splice(from, 1);
+        next.splice(to, 0, dragged);
+        currentGesture.order = next.map((item) => item.id);
+        return next;
+      });
     });
   };
 
   const finishAccountDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
     const gesture = accountDragGestureRef.current;
     clearAccountDragTimer();
+    clearAccountDragFrame();
     accountDragGestureRef.current = null;
     if (!gesture?.active) return;
     event.preventDefault();
@@ -473,6 +519,7 @@ function App() {
   const cancelAccountDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
     const gesture = accountDragGestureRef.current;
     clearAccountDragTimer();
+    clearAccountDragFrame();
     accountDragGestureRef.current = null;
     if (!gesture?.active) return;
     event.preventDefault();
@@ -512,8 +559,11 @@ function App() {
   useEffect(() => () => clearAccountDragTimer(), [clearAccountDragTimer]);
 
   useEffect(() => {
-    if (authState === "authenticated" || authState === "guest") void loadAccounts();
-  }, [authState, loadAccounts]);
+    // Keep the empty mailbox target stable until the landing handoff and the
+    // staged app reveal have finished. Loading accounts earlier can replace
+    // that target mid-animation on fast connections.
+    if (!appEntering && (authState === "authenticated" || authState === "guest")) void loadAccounts();
+  }, [appEntering, authState, loadAccounts]);
 
   useEffect(() => {
     if (authState !== "authenticated") {
@@ -527,8 +577,8 @@ function App() {
   }, [authState, loadAnnouncements]);
 
   useEffect(() => {
-    if (oauthOpen && !oauthAccount && selectedAccount) setOauthAccount(selectedAccount);
-  }, [oauthAccount, oauthOpen, selectedAccount]);
+    if (page === "oauth" && !oauthAccount && selectedAccount) setOauthAccount(selectedAccount);
+  }, [oauthAccount, page, selectedAccount]);
 
   useEffect(() => {
     if (!selectedAccountId) {
@@ -655,7 +705,7 @@ function App() {
     }
   };
 
-  const sendMailInBackground = async (draft: { accountId: number; to: string; cc: string; subject: string; text: string }) => {
+  const sendMailInBackground = async (draft: { accountId: number; to: string; cc: string; bcc: string; subject: string; text: string; html: string; attachments: ComposeAttachment[] }) => {
     const account = accounts.find((item) => item.id === draft.accountId);
     if (!account) {
       notify("邮箱账号不存在", "error");
@@ -676,7 +726,7 @@ function App() {
     try {
       await api(`/api/accounts/${draft.accountId}/send`, {
         method: "POST",
-        body: JSON.stringify({ to: draft.to, cc: draft.cc, subject: draft.subject, text: draft.text }),
+        body: JSON.stringify({ to: draft.to, cc: draft.cc, bcc: draft.bcc, subject: draft.subject, text: draft.text, html: draft.html, attachments: draft.attachments }),
       });
       setPendingSends((current) => current.filter((item) => item.id !== pending.id));
       setMessageReloadVersion((value) => value + 1);
@@ -698,7 +748,7 @@ function App() {
   }
 
   if (authState === "signedOut" || authState === "setup") {
-    return <LoginPage setupRequired={authState === "setup"} dark={dark} setDark={setDark} onLogin={(user) => { setCurrentUser(user); setAuthState("authenticated"); }} onGuest={() => { setCurrentUser(null); setAuthState("guest"); }} />;
+    return <LoginPage setupRequired={authState === "setup"} dark={dark} setDark={setDark} onLogin={(user) => { navigateTo("", { replace: true }); setAccounts([]); setSelectedAccountId(null); setAppEntering(true); setCurrentUser(user); setAuthState("authenticated"); }} onGuest={() => { navigateTo("", { replace: true }); setAccounts([]); setSelectedAccountId(null); setAppEntering(true); setCurrentUser(null); setAuthState("guest"); }} />;
   }
 
   const sidebar = (
@@ -708,7 +758,7 @@ function App() {
         <span>Mail</span>
         <button className="mobile-close" onClick={closeMobileNav}><X size={18} /></button>
       </div>
-      <button className="compose-button" onClick={() => navigateTo("sendmails")} disabled={!accounts.length || authState === "guest"} title={authState === "guest" ? t("游客模式仅支持收件") : ""}>
+      <button className={`compose-button ${page === "compose" ? "active" : ""}`} onClick={() => navigateTo("sendmails")} disabled={!accounts.length || authState === "guest"} title={authState === "guest" ? t("游客模式仅支持收件") : ""}>
         <Plus size={18} /> {t("写邮件")}
       </button>
       <div className="sidebar-scroll">
@@ -730,13 +780,13 @@ function App() {
           </button>
           <button onClick={() => navigateTo("import")}><Plus size={18} /> {t("导入账号")}</button>
           <button onClick={() => { setOauthAccount(selectedAccount); navigateTo("oauth"); }}><KeyRound size={18} /> {t("微软授权")}</button>
+          {currentUser?.administrator && <>
+            <span className="nav-label nav-label-spaced">ADMIN</span>
+            <button className={page === "admin" ? "active" : ""} onClick={() => navigateTo("admin")}><LayoutDashboard size={18} /> {t("管理概览")}</button>
+            <button className={page === "users" ? "active" : ""} onClick={() => navigateTo("users")}><UserCog size={18} /> {t("用户管理")}</button>
+            <button onClick={openAnnouncements}><CircleAlert size={18} /> {t("公告管理")}{announcementUnread > 0 && <em>{announcementUnread}</em>}</button>
+          </>}
           <span className="nav-label nav-label-spaced">{t("系统")}</span>
-          {currentUser?.administrator && (
-            <button onClick={openAnnouncements}>
-              <CircleAlert size={18} /> {t("公告管理")}
-              {announcementUnread > 0 && <em>{announcementUnread}</em>}
-            </button>
-          )}
           <button className={page === "settings" ? "active" : ""} onClick={() => navigateTo("settings")}>
             <Settings size={18} /> {t("系统设置")}
           </button>
@@ -817,11 +867,6 @@ function App() {
               <button
                 type="button"
                 className="account-mini-main"
-                onPointerDown={(event) => startAccountDrag(account, event)}
-                onPointerMove={moveAccountDrag}
-                onPointerUp={finishAccountDrag}
-                onPointerCancel={cancelAccountDrag}
-                onContextMenu={(event) => event.preventDefault()}
                 onClick={(event) => {
                   if (Date.now() < accountClickBlockUntilRef.current) {
                     event.preventDefault();
@@ -840,8 +885,14 @@ function App() {
                 className="account-more"
                 aria-label={t("账号操作")}
                 aria-expanded={accountMenuId === account.id}
+                onPointerDown={(event) => startAccountDrag(account, event)}
+                onPointerMove={moveAccountDrag}
+                onPointerUp={finishAccountDrag}
+                onPointerCancel={cancelAccountDrag}
+                onContextMenu={(event) => event.preventDefault()}
                 onClick={(event) => {
                   event.stopPropagation();
+                  if (Date.now() < accountClickBlockUntilRef.current) return;
                   setAccountMenuId((current) => current === account.id ? null : account.id);
                 }}
               ><EllipsisVertical size={16} /></button>
@@ -882,7 +933,8 @@ function App() {
   );
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${appEntering ? "app-entering" : ""} ${appRevealReady ? "app-revealing" : ""}`}>
+      {appEntering && <img className="app-entry-mobile-plane" src={brandLogoUrl} alt="" aria-hidden="true" />}
       <aside className="sidebar">{sidebar}</aside>
       {mobileNavOpen && (
         <div
@@ -935,7 +987,7 @@ function App() {
           </div>
         </header>
 
-        <main className={`main-content ${page === "inbox" ? "inbox-content" : ""}`}>
+        <main className={`main-content ${page === "inbox" ? "inbox-content" : page === "compose" ? "compose-content" : ""}`}>
           {page === "inbox" && (
             <InboxPage
               accounts={accounts}
@@ -962,6 +1014,15 @@ function App() {
               setPage={setMailPage}
             />
           )}
+          {page === "compose" && (
+            <ComposePage
+              accounts={accounts}
+              initialAccountId={selectedAccountId}
+              onCancel={() => navigateTo("inbox")}
+              onSend={sendMailInBackground}
+              notify={notify}
+            />
+          )}
           {page === "accounts" && (
             <AccountsPage
               accounts={accounts}
@@ -975,6 +1036,17 @@ function App() {
           {page === "settings" && (
             <SettingsPage authorize={() => { setOauthAccount(selectedAccount); navigateTo("oauth"); }} />
           )}
+          {page === "admin" && currentUser?.administrator && <AdminOverviewPage />}
+          {page === "users" && currentUser?.administrator && <AdminUsersPage />}
+          {page === "oauth" && (
+            <OAuthPage
+              accounts={accounts}
+              initialAccount={oauthAccount || selectedAccount}
+              notify={notify}
+              onBack={() => navigateTo("settings")}
+              onAccountSelected={(account) => { setOauthAccount(account); setSelectedAccountId(account.id); }}
+            />
+          )}
         </main>
       </div>
 
@@ -984,8 +1056,6 @@ function App() {
         notify={notify}
         onImported={(next) => { setAccounts(next); setSelectedAccountId((current) => current || next[0]?.id || null); }}
       />
-      <ComposeDialog open={composeOpen} onClose={() => navigateTo("inbox", { replace: true })} onSend={sendMailInBackground} accounts={accounts} initialAccountId={selectedAccountId} />
-      <OAuthDialog open={oauthOpen} onClose={() => navigateTo("settings", { replace: true })} account={oauthAccount} notify={notify} />
       <AnnouncementDialog
         open={announcementOpen}
         onClose={() => setAnnouncementOpen(false)}
@@ -1031,6 +1101,14 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
   const [resendSeconds, setResendSeconds] = useState(0);
   const [sendingCode, setSendingCode] = useState(false);
   const [notice, setNotice] = useState("");
+  const [successTransition, setSuccessTransition] = useState(false);
+  const [flightPlane, setFlightPlane] = useState<{ width: number; height: number; initialScale: number; finalScale: number; finalRotation: number } | null>(null);
+  const [flightPath, setFlightPath] = useState<string | null>(null);
+  const [flightDuration, setFlightDuration] = useState(2.8);
+  const brandPlaneRef = useRef<HTMLImageElement | null>(null);
+  const desktopFlightTargetRef = useRef<HTMLElement | null>(null);
+  const mobileFlightTargetRef = useRef<HTMLDivElement | null>(null);
+  const successTimerRef = useRef<number | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -1039,6 +1117,10 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
     const timer = window.setTimeout(() => setResendSeconds((value) => Math.max(0, value - 1)), 1000);
     return () => window.clearTimeout(timer);
   }, [resendSeconds]);
+
+  useEffect(() => () => {
+    if (successTimerRef.current !== null) window.clearTimeout(successTimerRef.current);
+  }, []);
 
   const changeMode = (next: "login" | "register") => {
     setMode(next);
@@ -1069,6 +1151,45 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
     }
   };
 
+  const beginSuccessTransition = (complete: () => void) => {
+    const planeRect = brandPlaneRef.current?.getBoundingClientRect();
+    if (!planeRect) {
+      complete();
+      return;
+    }
+    const desktopTarget = window.innerWidth > 980;
+    const desktopTargetRect = desktopTarget ? desktopFlightTargetRef.current?.querySelector(".brand-mark img")?.getBoundingClientRect() : null;
+    const mobileTargetRect = desktopTarget ? null : mobileFlightTargetRef.current?.querySelector(".empty-brand img")?.getBoundingClientRect();
+    const targetSize = desktopTarget ? desktopTargetRect?.width || 31 : mobileTargetRect?.width || 58;
+    const targetLeft = desktopTarget ? desktopTargetRect?.left ?? 21 : mobileTargetRect?.left ?? Math.max(18, window.innerWidth / 2 - 73);
+    const targetTop = desktopTarget ? desktopTargetRect?.top ?? 18 : mobileTargetRect?.top ?? 60 + (window.innerHeight - 60) * .33;
+    const startX = planeRect.left + planeRect.width / 2;
+    const startY = planeRect.top + planeRect.height / 2;
+    const endX = targetLeft + targetSize / 2;
+    const endY = targetTop + targetSize / 2;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const finalControlX = desktopTarget ? width * .13 : width * .18;
+    const finalControlY = desktopTarget ? height * .06 : height * .28;
+    const finalTangent = Math.atan2(endY - finalControlY, endX - finalControlX) * 180 / Math.PI;
+    setFlightPlane({ width: targetSize, height: targetSize, initialScale: planeRect.width / targetSize, finalScale: 1, finalRotation: -(finalTangent + 30) });
+    if (!desktopTarget) {
+      document.documentElement.style.setProperty("--app-entry-mobile-plane-left", `${targetLeft}px`);
+      document.documentElement.style.setProperty("--app-entry-mobile-plane-top", `${targetTop}px`);
+      document.documentElement.style.setProperty("--app-entry-mobile-plane-size", `${targetSize}px`);
+    }
+    const path = desktopTarget
+      ? `M ${startX} ${startY} C ${startX - width * .12} ${startY + height * .04}, ${width * .23} ${height * .3}, ${width * .21} ${height * .62} C ${width * .2} ${height * .88}, ${width * .48} ${height * .97}, ${width * .64} ${height * .91} C ${width * .88} ${height * .83}, ${width * .88} ${height * .49}, ${width * .84} ${height * .28} C ${width * .81} ${height * .11}, ${width * .62} ${height * .1}, ${width * .48} ${height * .07} C ${width * .31} ${height * .04}, ${width * .13} ${height * .06}, ${endX} ${endY}`
+      : `M ${startX} ${startY} C ${width * .2} ${startY + height * .05}, ${width * .06} ${height * .36}, ${width * .07} ${height * .63} C ${width * .08} ${height * .88}, ${width * .72} ${height * .94}, ${width * .92} ${height * .68} C ${width * .98} ${height * .48}, ${width * .87} ${height * .17}, ${width * .55} ${height * .1} C ${width * .25} ${height * .04}, ${width * .18} ${height * .28}, ${endX} ${endY}`;
+    setFlightPath(path);
+    setSuccessTransition(true);
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const duration = reduceMotion ? .52 : 2.8;
+    setFlightDuration(duration);
+    const landingHold = reduceMotion ? 80 : 320;
+    successTimerRef.current = window.setTimeout(complete, duration * 1000 + landingHold);
+  };
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setLoading(true);
@@ -1079,7 +1200,8 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
         ? { email, password }
         : { username, email, password, verificationCode };
       const result = await api<{ username: string; administrator?: boolean }>(endpoint, { method: "POST", body: JSON.stringify(body) });
-      onLogin({ username: result.username, administrator: Boolean(result.administrator) });
+      const user = { username: result.username, administrator: Boolean(result.administrator) };
+      if (mode === "setup") onLogin(user); else beginSuccessTransition(() => onLogin(user));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "登录失败");
     } finally {
@@ -1091,7 +1213,7 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
     setError("");
     try {
       await api("/api/auth/guest", { method: "POST" });
-      onGuest();
+      beginSuccessTransition(onGuest);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t("进入游客模式失败"));
     } finally {
@@ -1099,17 +1221,21 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
     }
   };
   return (
-    <div className="login-page">
-      <div className="login-top-brand">
-        <div className="brand-mark"><img src={brandLogoUrl} alt="" /></div>
-        <span>Mail</span>
-      </div>
+    <div className={`login-page ${successTransition ? "auth-transitioning" : ""}`}>
       <div className="login-actions">
         <button className="language-toggle" onClick={() => setLanguage(language === "zh" ? "en" : "zh")} aria-label={t("界面语言")}><Languages size={15} /> {language === "zh" ? "EN" : "中文"}</button>
         <button className="login-theme icon-button" onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
       </div>
-      <section className="login-card">
-        <h1>{mode === "setup" ? t("配置管理员") : mode === "login" ? t("欢迎回来") : t("创建个人空间")}</h1>
+      <aside ref={desktopFlightTargetRef} className="sidebar login-desktop-flight-target" aria-hidden="true"><div className="brand-row"><span className="brand-mark"><img src={brandLogoUrl} alt="" /></span><span>Mail</span></div></aside>
+      <div ref={mobileFlightTargetRef} className="login-mobile-flight-target" aria-hidden="true">
+        <div className="workspace">
+          <header className="topbar" />
+          <main className="main-content inbox-content"><EmptyMailbox openImport={() => undefined} /></main>
+        </div>
+      </div>
+      {successTransition && flightPath && flightPlane && <div className="login-plane-motion" aria-hidden="true" style={{ width: flightPlane.width, height: flightPlane.height, offsetPath: `path('${flightPath}')`, "--flight-initial-scale": flightPlane.initialScale, "--flight-final-scale": flightPlane.finalScale, "--flight-mid-rotation": `${flightPlane.finalRotation * .5}deg`, "--flight-final-rotation": `${flightPlane.finalRotation}deg`, "--flight-duration": `${flightDuration}s` } as React.CSSProperties}><div className="login-plane-body"><img className="login-plane-svg-image" src={brandLogoUrl} alt="" /></div></div>}
+      <section className={`login-card ${successTransition ? "success-transition" : ""}`}>
+        {mode === "setup" ? <h1>{t("配置管理员")}</h1> : <div className="login-brand-hero"><img ref={brandPlaneRef} src={brandLogoUrl} alt="" /><span>Mail</span></div>}
         {!setupRequired && <div className="auth-tabs"><button className={mode === "login" ? "active" : ""} onClick={() => changeMode("login")}>{t("登录")}</button><button className={mode === "register" ? "active" : ""} onClick={() => changeMode("register")}>{t("注册")}</button></div>}
         <form onSubmit={submit}>
           {mode === "login"
@@ -1119,19 +1245,10 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
           {mode !== "login" && <label className="stack-field"><span>{t("验证码")}</span><div className="verification-control"><input value={verificationCode} onChange={(event) => setVerificationCode(event.target.value.replace(/\D/g, "").slice(0, 6))} inputMode="numeric" autoComplete="one-time-code" placeholder={t("6 位验证码")} /><button type="button" disabled={!email || sendingCode || resendSeconds > 0} onClick={sendVerificationCode}>{sendingCode ? t("发送中…") : resendSeconds > 0 ? t("{seconds} 秒后重发", { seconds: resendSeconds }) : t("发送验证码")}</button></div></label>}
           {notice && <div className="login-notice"><CheckCircle2 size={15} />{notice}</div>}
           {error && <div className="login-error"><CircleAlert size={15} />{error}</div>}
-          <button className="button primary full login-submit" disabled={(mode === "login" ? !email : !username || !email || verificationCode.length !== 6) || !password || loading}><LockKeyhole size={16} />{loading ? t("处理中…") : mode === "setup" ? t("完成管理员配置") : mode === "login" ? t("登录 Mail") : t("创建账号")}</button>
+          <button className="button primary full login-submit" disabled={(mode === "login" ? !email : !username || !email || verificationCode.length !== 6) || !password || loading || successTransition}><LockKeyhole size={16} />{loading ? t("处理中…") : mode === "setup" ? t("完成管理员配置") : mode === "login" ? t("登录 Mail") : t("创建账号")}</button>
         </form>
-        {!setupRequired && <><div className="guest-divider"><span>{t("或者")}</span></div><button className="button secondary full guest-button" disabled={loading} onClick={enterGuest}><UserRound size={16} /> {t("以游客模式继续")}</button></>}
+        {!setupRequired && mode === "login" && <><div className="guest-divider"><span>{t("或者")}</span></div><button className="button secondary full guest-button" disabled={loading || successTransition} onClick={enterGuest}><UserRound size={16} /> {t("以游客模式继续")}</button></>}
       </section>
-    </div>
-  );
-}
-
-function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string; title: string; description: string; actions: React.ReactNode }) {
-  return (
-    <div className="page-header">
-      <div><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{description}</p></div>
-      <div className="page-actions">{actions}</div>
     </div>
   );
 }
@@ -1577,6 +1694,35 @@ function AccountDeleteConfirmDialog({
   );
 }
 
+function AccountBatchGroupDialog({ open, count, value, loading, onChange, onClose, onConfirm }: { open: boolean; count: number; value: string; loading: boolean; onChange: (value: string) => void; onClose: () => void; onConfirm: () => void }) {
+  const { t } = useI18n();
+  if (!open) return null;
+  return (
+    <div className="message-action-backdrop" onMouseDown={onClose}>
+      <section className="account-batch-dialog" role="dialog" aria-modal="true" aria-label={t("批量设置分组")} onMouseDown={(event) => event.stopPropagation()}>
+        <span className="account-batch-dialog-icon group"><FolderCog size={20} /></span>
+        <div><h2>{t("批量设置分组")}</h2><p>{t("为已选择的 {count} 个邮箱设置分组", { count })}</p></div>
+        <label><span>{t("分组名称")}</span><input autoFocus value={value} maxLength={80} onChange={(event) => onChange(event.target.value)} placeholder={t("例如：工作、个人或项目")} /></label>
+        <div className="account-batch-dialog-actions"><button className="button secondary" disabled={loading} onClick={onClose}>{t("取消")}</button><button className="button primary" disabled={loading} onClick={onConfirm}>{loading ? t("处理中…") : t("保存分组")}</button></div>
+      </section>
+    </div>
+  );
+}
+
+function AccountBatchDeleteDialog({ open, count, loading, onClose, onConfirm }: { open: boolean; count: number; loading: boolean; onClose: () => void; onConfirm: () => void }) {
+  const { t } = useI18n();
+  if (!open) return null;
+  return (
+    <div className="message-action-backdrop" onMouseDown={onClose}>
+      <section className="account-batch-dialog compact" role="dialog" aria-modal="true" aria-label={t("批量删除")} onMouseDown={(event) => event.stopPropagation()}>
+        <span className="account-batch-dialog-icon danger"><Trash2 size={20} /></span>
+        <div><h2>{t("确认批量删除")}</h2><p>{t("将删除已选择的 {count} 个邮箱账号", { count })}</p></div>
+        <div className="account-batch-dialog-actions"><button className="button secondary" disabled={loading} onClick={onClose}>{t("取消")}</button><button className="button danger-button" disabled={loading} onClick={onConfirm}>{loading ? t("处理中…") : t("批量删除")}</button></div>
+      </section>
+    </div>
+  );
+}
+
 function EmptyMailbox({ openImport }: { openImport: () => void }) {
   const { t } = useI18n();
   return (
@@ -1590,15 +1736,47 @@ function EmptyMailbox({ openImport }: { openImport: () => void }) {
 
 function AccountsPage({ accounts, openImport, notify, reload, authorize, requestDelete }: { accounts: Account[]; openImport: () => void; notify: (message: string, type?: "success" | "error") => void; reload: () => void; authorize: (account: Account) => void; requestDelete: (account: Account) => void }) {
   const { language, t } = useI18n();
-  const [exportMode, setExportMode] = useState(false);
+  const [batchAction, setBatchAction] = useState<"export" | "copy" | "group" | "delete" | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
-  const [exporting, setExporting] = useState(false);
-  const allSelected = accounts.length > 0 && selectedIds.size === accounts.length;
+  const [busyAction, setBusyAction] = useState(false);
+  const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  const [groupValue, setGroupValue] = useState("");
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [groupFilter, setGroupFilter] = useState("all");
+  const [groupMenuOpen, setGroupMenuOpen] = useState(false);
+  const [accountPage, setAccountPage] = useState(1);
+  const pageSize = 10;
+  const groups = useMemo(() => Array.from(new Set(accounts.map((account) => account.group).filter(Boolean))).sort((a, b) => a.localeCompare(b)), [accounts]);
+  const filtered = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    return accounts.filter((account) => {
+      const matchesQuery = !normalized || `${account.email}\n${account.remark || ""}\n${account.group || ""}`.toLocaleLowerCase().includes(normalized);
+      const matchesGroup = groupFilter === "all" || (groupFilter === "ungrouped" ? !account.group : account.group === groupFilter.slice(6));
+      return matchesQuery && matchesGroup;
+    });
+  }, [accounts, groupFilter, query]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pageAccounts = filtered.slice((accountPage - 1) * pageSize, accountPage * pageSize);
+  const allSelected = filtered.length > 0 && filtered.every((account) => selectedIds.has(account.id));
+  const selectedAccounts = accounts.filter((account) => selectedIds.has(account.id));
+  const selectionMode = batchAction !== null;
+  const groupFilterLabel = groupFilter === "all"
+    ? t("全部分组")
+    : groupFilter === "ungrouped"
+      ? t("未分组")
+      : groupFilter.slice(6);
 
   useEffect(() => {
     const available = new Set(accounts.map((account) => account.id));
     setSelectedIds((current) => new Set(Array.from(current).filter((id) => available.has(id))));
   }, [accounts]);
+
+  useEffect(() => setAccountPage(1), [query, groupFilter]);
+
+  useEffect(() => {
+    if (accountPage > pageCount) setAccountPage(pageCount);
+  }, [accountPage, pageCount]);
 
   const test = async (account: Account) => {
     try {
@@ -1621,64 +1799,198 @@ function AccountsPage({ accounts, openImport, notify, reload, authorize, request
     });
   };
 
-  const cancelExportMode = () => {
-    setExportMode(false);
+  const cancelBatchMode = () => {
+    setBatchAction(null);
     setSelectedIds(new Set());
+    setGroupDialogOpen(false);
+    setDeleteDialogOpen(false);
   };
 
-  const exportSelected = async () => {
-    if (!exportMode) {
-      setExportMode(true);
+  const executeBatchAction = async () => {
+    const ids = selectedAccounts.map((account) => account.id);
+    if (!batchAction || !ids.length) return;
+    if (batchAction === "group") {
+      setGroupValue(selectedAccounts.every((account) => account.group === selectedAccounts[0]?.group) ? selectedAccounts[0]?.group || "" : "");
+      setGroupDialogOpen(true);
       return;
     }
-    const ids = accounts.filter((account) => selectedIds.has(account.id)).map((account) => account.id);
-    if (!ids.length) return;
-    setExporting(true);
+    if (batchAction === "delete") {
+      setDeleteDialogOpen(true);
+      return;
+    }
+    setBusyAction(true);
     try {
-      await downloadAccountsFile(ids);
-      notify("账号已导出");
-      cancelExportMode();
+      if (batchAction === "export") {
+        await downloadAccountsFile(ids);
+        notify(t("账号备份已导出"));
+      } else {
+        const result = await requestAccountsFile(ids);
+        await copyPlainText(result.content);
+        notify(t("所选账号已复制"));
+      }
+      cancelBatchMode();
     } catch (error) {
-      notify(error instanceof Error ? error.message : "账号导出失败", "error");
+      notify(error instanceof Error ? error.message : t(batchAction === "export" ? "账号导出失败" : "批量复制失败"), "error");
     } finally {
-      setExporting(false);
+      setBusyAction(false);
     }
   };
+
+  const confirmGroup = async () => {
+    setBusyAction(true);
+    try {
+      await api("/api/accounts/batch/group", { method: "PATCH", body: JSON.stringify({ ids: selectedAccounts.map((account) => account.id), group: groupValue.trim() }) });
+      notify(t(groupValue.trim() ? "账号分组已更新" : "账号已移出分组"));
+      reload();
+      cancelBatchMode();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : t("设置分组失败"), "error");
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const confirmBatchDelete = async () => {
+    setBusyAction(true);
+    try {
+      await api("/api/accounts/batch/delete", { method: "POST", body: JSON.stringify({ ids: selectedAccounts.map((account) => account.id) }) });
+      notify(t("所选账号已删除"));
+      reload();
+      cancelBatchMode();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : t("批量删除失败"), "error");
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const batchActionLabel = batchAction === "export" ? t("导出所选") : batchAction === "copy" ? t("复制所选") : batchAction === "group" ? t("设置分组") : t("删除所选");
 
   return (
     <>
-      <PageHeader eyebrow="ACCOUNTS" title={t("账号管理")} description={t("管理 Outlook、Hotmail 与 Live 邮箱连接。")} actions={<><button className="button account-header-button" disabled={exporting || !accounts.length || (exportMode && selectedIds.size === 0)} onClick={() => void exportSelected()}><Download size={16} /> {exportMode ? t("导出所选 ({count})", { count: selectedIds.size }) : t("导出账号")}</button><button className="button account-header-button" onClick={openImport}><Plus size={16} /> {t("导入账号")}</button></>} />
-      <section className="account-summary-card"><div><span className="summary-icon"><Users size={22} /></span><div><strong>{t("{count} 个邮箱账号", { count: accounts.length })}</strong><p>{t("敏感字段均以 AES-256-GCM 加密写入 SQLite。")}</p></div></div><span className="secure-badge"><ShieldCheck size={15} /> {t("本地加密")}</span></section>
-      <section className="accounts-card">
-        {exportMode && <div className="account-selection-bar"><button type="button" onClick={() => setSelectedIds(allSelected ? new Set() : new Set(accounts.map((account) => account.id)))}><span className={allSelected ? "selection-box checked" : "selection-box"}>{allSelected && <Check size={12} />}</span>{t(allSelected ? "取消全选" : "全选")}</button><span>{t("已选择 {count} 个账号", { count: selectedIds.size })}</span><button type="button" className="selection-cancel" onClick={cancelExportMode}>{t("取消")}</button></div>}
-        <div className={exportMode ? "table-head export-mode" : "table-head"}>{exportMode && <span /> }<span>{t("邮箱账号")}</span><span>{t("备注")}</span><span>{t("最后同步")}</span><span>{t("操作")}</span></div>
-        {accounts.map((account) => (
-          <div className={exportMode ? "account-row export-mode" : "account-row"} key={account.id}>
-            {exportMode && <button type="button" className="account-check" onClick={() => toggleSelected(account.id)} aria-label={t(selectedIds.has(account.id) ? "取消选择 {email}" : "选择 {email}", { email: account.email })}><span className={selectedIds.has(account.id) ? "selection-box checked" : "selection-box"}>{selectedIds.has(account.id) && <Check size={12} />}</span></button>}
-            <div className="account-identity"><span className="account-avatar">{account.email.slice(0, 1).toUpperCase()}</span><div><strong>{account.email}</strong><small><i className="status-dot" /> Outlook OAuth2</small></div></div>
-            <span>{account.remark || t("未添加备注")}</span>
-            <span>{formatDate(account.lastSyncAt, true, language === "en" ? "en-US" : "zh-CN")}</span>
-            <div className="row-actions"><button onClick={() => test(account)}><RefreshCw size={15} /> {t("测试")}</button><button onClick={() => authorize(account)}><KeyRound size={15} /> {t("授权")}</button><button className="danger" aria-label={t("删除 {email}", { email: account.email })} title={t("删除 {email}", { email: account.email })} onClick={() => requestDelete(account)}><Trash2 size={15} /></button></div>
+      <section className="accounts-professional-page">
+      <header className="accounts-professional-head"><div><h1>{t("账号管理")}</h1><p>{t("安全管理您的所有邮箱账号")}</p></div><div className="accounts-count"><strong>{accounts.length}</strong><span>{t("邮箱账号")}</span></div></header>
+
+      <div className="accounts-toolbar">
+        <label className="accounts-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("搜索邮箱地址或备注…")} /></label>
+        <div className="accounts-group-select">
+          <button type="button" aria-haspopup="listbox" aria-expanded={groupMenuOpen} aria-label={t("邮箱分组")} onClick={() => setGroupMenuOpen((open) => !open)}><span>{groupFilterLabel}</span><ChevronDown size={15} /></button>
+          {groupMenuOpen && <><button type="button" className="accounts-group-dismiss" aria-label={t("关闭")} onClick={() => setGroupMenuOpen(false)} /><div className="accounts-group-options" role="listbox"><button type="button" role="option" aria-selected={groupFilter === "all"} onClick={() => { setGroupFilter("all"); setGroupMenuOpen(false); }}><span>{t("全部分组")}</span>{groupFilter === "all" && <Check size={14} />}</button><button type="button" role="option" aria-selected={groupFilter === "ungrouped"} onClick={() => { setGroupFilter("ungrouped"); setGroupMenuOpen(false); }}><span>{t("未分组")}</span>{groupFilter === "ungrouped" && <Check size={14} />}</button>{groups.map((group) => { const value = `group:${group}`; return <button type="button" role="option" aria-selected={groupFilter === value} key={group} onClick={() => { setGroupFilter(value); setGroupMenuOpen(false); }}><span>{group}</span>{groupFilter === value && <Check size={14} />}</button>; })}</div></>}
+        </div>
+        <button className="button account-tool import" onClick={openImport}><Upload size={15} /> {t("导入邮箱")}</button>
+        <button className={`button account-tool export ${batchAction === "export" ? "active" : ""}`} disabled={!accounts.length || busyAction} onClick={() => setBatchAction("export")}><Download size={15} /> {t("导出备份")}</button>
+        <button className={`button account-tool copy ${batchAction === "copy" ? "active" : ""}`} disabled={!accounts.length || busyAction} onClick={() => setBatchAction("copy")}><Copy size={15} /> {t("批量复制")}</button>
+        <button className={`button account-tool group ${batchAction === "group" ? "active" : ""}`} disabled={!accounts.length || busyAction} onClick={() => setBatchAction("group")}><FolderCog size={15} /> {t("批量设置分组")}</button>
+        <button className={`button account-tool delete ${batchAction === "delete" ? "active" : ""}`} disabled={!accounts.length || busyAction} onClick={() => setBatchAction("delete")}><Trash2 size={15} /> {t("批量删除")}</button>
+      </div>
+
+      {selectionMode && <div className={`account-batch-selection ${batchAction}`}><div><button type="button" onClick={() => setSelectedIds(allSelected ? new Set() : new Set(filtered.map((account) => account.id)))}><span className={allSelected ? "selection-box checked" : "selection-box"}>{allSelected && <Check size={12} />}</span>{t(allSelected ? "取消全选" : "全选")}</button><span>{t("已选择 {count} 个账号", { count: selectedIds.size })}</span></div><div><button type="button" className="button secondary" onClick={cancelBatchMode}>{t("取消")}</button><button type="button" className="button batch-run" disabled={!selectedIds.size || busyAction} onClick={() => void executeBatchAction()}>{busyAction ? t("处理中…") : `${batchActionLabel} (${selectedIds.size})`}</button></div></div>}
+
+      <div className={`professional-accounts-table ${selectionMode ? "export-mode" : ""}`}>
+        <div className="professional-account-head">{selectionMode && <span /> }<span>#</span><span>{t("邮箱地址")}</span><span>{t("连接状态")}</span><span>{t("权限类型")}</span><span>{t("最后同步")}</span><span>{t("操作")}</span></div>
+        {pageAccounts.map((account, index) => (
+          <div className="professional-account-row" key={account.id}>
+            {selectionMode && <button type="button" className="account-check" onClick={() => toggleSelected(account.id)} aria-label={t(selectedIds.has(account.id) ? "取消选择 {email}" : "选择 {email}", { email: account.email })}><span className={selectedIds.has(account.id) ? "selection-box checked" : "selection-box"}>{selectedIds.has(account.id) && <Check size={12} />}</span></button>}
+            <span className="account-index">{(accountPage - 1) * pageSize + index + 1}</span>
+            <div className="professional-account-identity"><span className="account-avatar">{account.email.slice(0, 1).toUpperCase()}</span><div><strong>{account.email}</strong><small>{account.group ? `${account.group} · ` : ""}{account.remark || t("未添加备注")}</small></div></div>
+            <span className={account.lastSyncAt ? "account-status synced" : "account-status pending"}>{account.lastSyncAt ? <Check size={13} /> : <RefreshCw size={13} />}{t(account.lastSyncAt ? "正常" : "待检测")}</span>
+            <span className="account-permission"><LockKeyhole size={13} /> OAuth2</span>
+            <time>{formatDate(account.lastSyncAt, true, language === "en" ? "en-US" : "zh-CN")}</time>
+            <div className="professional-account-actions"><button onClick={() => test(account)}><RefreshCw size={15} /> {t("测试")}</button><button onClick={() => authorize(account)}><KeyRound size={15} /> {t("授权")}</button><button className="danger" aria-label={t("删除 {email}", { email: account.email })} title={t("删除 {email}", { email: account.email })} onClick={() => requestDelete(account)}><Trash2 size={15} /></button></div>
           </div>
         ))}
-        {!accounts.length && <div className="empty-table"><Users size={24} /><span>{t("还没有导入邮箱账号")}</span><button className="button secondary" onClick={openImport}>{t("立即导入")}</button></div>}
+        {!pageAccounts.length && <div className="empty-table"><Users size={24} /><span>{accounts.length ? t("没有匹配的邮箱账号") : t("还没有导入邮箱账号")}</span>{!accounts.length && <button className="button secondary" onClick={openImport}>{t("立即导入")}</button>}</div>}
+        <footer className="accounts-pagination"><span>{t("共 {count} 个账号", { count: filtered.length })}</span><div><button disabled={accountPage <= 1} onClick={() => setAccountPage((page) => Math.max(1, page - 1))}><ChevronLeft size={15} /></button><strong>{accountPage}</strong><span>/ {pageCount}</span><button disabled={accountPage >= pageCount} onClick={() => setAccountPage((page) => Math.min(pageCount, page + 1))}><ChevronRight size={15} /></button></div></footer>
+      </div>
       </section>
+      <AccountBatchGroupDialog open={groupDialogOpen} count={selectedIds.size} value={groupValue} loading={busyAction} onChange={setGroupValue} onClose={() => { if (!busyAction) setGroupDialogOpen(false); }} onConfirm={() => void confirmGroup()} />
+      <AccountBatchDeleteDialog open={deleteDialogOpen} count={selectedIds.size} loading={busyAction} onClose={() => { if (!busyAction) setDeleteDialogOpen(false); }} onConfirm={() => void confirmBatchDelete()} />
     </>
+  );
+}
+
+function AdminOverviewPage() {
+  const { t } = useI18n();
+  const [stats, setStats] = useState<AdminStats | null>(null);
+  const [activity, setActivity] = useState<AdminActivityPoint[]>([]);
+  const [period, setPeriod] = useState<7 | 14 | 30>(30);
+  const [metric, setMetric] = useState<"users" | "accounts" | "guests" | "announcements">("accounts");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    Promise.all([api<AdminStats>("/api/admin/stats"), api<{ activity: AdminActivityPoint[] }>("/api/admin/activity?days=30")])
+      .then(([nextStats, nextActivity]) => { setStats(nextStats); setActivity(nextActivity.activity); })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : t("无法读取管理数据")));
+  }, [t]);
+  const cards = [
+    { label: t("注册用户"), value: stats?.users, icon: Users },
+    { label: t("邮箱账号"), value: stats?.mailboxAccounts, icon: Mail },
+    { label: t("活跃游客"), value: stats?.activeGuests, icon: UserRound },
+    { label: t("已发布公告"), value: stats?.announcements, icon: CircleAlert },
+  ];
+  const visibleActivity = activity.slice(-period);
+  const metricOptions: Array<{ key: typeof metric; label: string; value: number | undefined }> = [
+    { key: "users", label: t("注册用户"), value: stats?.users },
+    { key: "accounts", label: t("邮箱账号"), value: stats?.mailboxAccounts },
+    { key: "guests", label: t("活跃游客"), value: stats?.activeGuests },
+    { key: "announcements", label: t("已发布公告"), value: stats?.announcements },
+  ];
+  const maxValue = Math.max(1, ...visibleActivity.map((point) => point[metric]));
+  return (
+    <section className="admin-professional-page">
+      <header className="accounts-professional-head"><div><h1>{t("管理概览")}</h1><p>{t("查看用户、邮箱账号与站点运行摘要")}</p></div></header>
+      {error && <div className="login-error"><CircleAlert size={15} />{error}</div>}
+      <div className="admin-stat-grid">{cards.map(({ label, value, icon: Icon }) => <div key={label} className="admin-stat-card"><div><span>{label}</span><strong>{value ?? "—"}</strong></div><Icon size={20} /></div>)}</div>
+      <div className="admin-data-panel">
+        <header><div><h2>{t("数据趋势")}</h2><p>{t("查看最近一段时间的新增数据")}</p></div><select value={period} onChange={(event) => setPeriod(Number(event.target.value) as 7 | 14 | 30)}><option value={7}>{t("最近 7 天")}</option><option value={14}>{t("最近 14 天")}</option><option value={30}>{t("最近 30 天")}</option></select></header>
+        <div className="admin-metric-tabs">{metricOptions.map((option) => <button key={option.key} className={metric === option.key ? "active" : ""} onClick={() => setMetric(option.key)}><span>{option.label}</span><strong>{option.value ?? "—"}</strong></button>)}</div>
+        <div className="admin-chart" aria-label={t("数据趋势图")}>
+          {visibleActivity.map((point) => <div className="admin-chart-column" key={point.date} title={`${point.date}: ${point[metric]}`}><div><i style={{ height: `${Math.max(point[metric] ? 6 : 1.5, point[metric] / maxValue * 100)}%` }} /></div><span>{point.date.slice(5)}</span></div>)}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function AdminUsersPage() {
+  const { language, t } = useI18n();
+  const [users, setUsers] = useState<AdminUserSummary[]>([]);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api<{ users: AdminUserSummary[] }>("/api/admin/users").then((result) => setUsers(result.users)).catch((reason) => setError(reason instanceof Error ? reason.message : t("无法读取用户列表"))).finally(() => setLoading(false));
+  }, [t]);
+  const filtered = useMemo(() => {
+    const normalized = query.trim().toLocaleLowerCase();
+    return normalized ? users.filter((user) => `${user.username}\n${user.email}`.toLocaleLowerCase().includes(normalized)) : users;
+  }, [query, users]);
+  return (
+    <section className="admin-professional-page">
+      <header className="accounts-professional-head"><div><h1>{t("用户管理")}</h1><p>{t("仅显示安全的用户摘要，不包含密码或邮箱令牌")}</p></div><div className="accounts-count"><strong>{users.length}</strong><span>{t("注册用户")}</span></div></header>
+      <div className="accounts-toolbar admin-users-toolbar"><label className="accounts-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("搜索用户名或登录邮箱…")} /></label></div>
+      <div className="admin-users-table">
+        <div className="admin-users-head"><span>{t("用户")}</span><span>{t("登录邮箱")}</span><span>{t("角色")}</span><span>{t("邮箱数量")}</span><span>{t("注册时间")}</span></div>
+        {loading && <div className="empty-table"><RefreshCw className="spin" size={21} /><span>{t("正在加载用户…")}</span></div>}
+        {!loading && error && <div className="empty-table"><CircleAlert size={22} /><span>{error}</span></div>}
+        {!loading && !error && filtered.map((user) => <div className="admin-user-row" key={user.id}><div><span className="sidebar-user-avatar" style={{ background: avatarGradient(user.username) }}>{user.username.slice(0, 2).toUpperCase()}</span><strong>{user.username}</strong></div><span>{user.email || "—"}</span><span className={user.administrator ? "admin-role admin" : "admin-role"}>{t(user.administrator ? "管理员" : "普通用户")}</span><strong>{user.accountCount}</strong><time>{formatDate(user.createdAt, true, language === "en" ? "en-US" : "zh-CN")}</time></div>)}
+        {!loading && !error && !filtered.length && <div className="empty-table"><Users size={22} /><span>{t("没有匹配的用户")}</span></div>}
+      </div>
+    </section>
   );
 }
 
 function SettingsPage({ authorize }: { authorize: () => void }) {
   const { t } = useI18n();
   return (
-    <>
-      <PageHeader eyebrow="SETTINGS" title={t("系统设置")} description={t("查看存储、安全和微软授权配置。")} actions={<button className="button primary" onClick={authorize}><KeyRound size={16} /> {t("微软授权工具")}</button>} />
-      <section className="settings-grid">
-        <div className="settings-card"><span className="settings-icon"><Database size={20} /></span><div><h3>{t("SQLite 数据库")}</h3><p>{t("账号、备注和同步时间存储在单个本地数据库文件中。")}</p><code>data/mail.sqlite</code></div><span className="config-status">{t("已启用")}</span></div>
-        <div className="settings-card"><span className="settings-icon purple"><ShieldCheck size={20} /></span><div><h3>{t("凭据加密")}</h3><p>{t("密码、Client ID 与 Refresh Token 在写入前使用 AES-256-GCM 加密。")}</p><code>data/.master-key</code></div><span className="config-status">{t("已启用")}</span></div>
-        <div className="settings-card"><span className="settings-icon green"><Cloud size={20} /></span><div><h3>{t("微软邮件连接")}</h3><p>{t("收件使用 IMAP XOAUTH2，发件使用 SMTP OAuth2，不启用过时的基本认证。")}</p><code>IMAP 993 · SMTP 587</code></div><span className="config-status">OAuth2</span></div>
-      </section>
-      <section className="permission-card"><div><span className="permission-mark"><KeyRound size={20} /></span><div><h3>{t("发件权限说明")}</h3><p>{t("从部分旧工具取得的令牌仅包含 IMAP 权限，能够收件但不能发件。使用内置授权工具重新申请令牌时，会同时请求 IMAP、SMTP、Graph 和离线刷新权限。")}</p></div></div><button className="button secondary" onClick={authorize}>{t("重新授权")}</button></section>
-    </>
+    <section className="settings-professional-page">
+      <header className="accounts-professional-head"><div><h1>{t("系统设置")}</h1><p>{t("查看存储、安全和微软授权配置。")}</p></div><button className="button account-import-button" onClick={authorize}><KeyRound size={16} /> {t("微软授权工具")}</button></header>
+      <div className="settings-professional-list">
+        <div className="settings-professional-row"><span className="settings-icon"><Database size={20} /></span><div><h3>{t("SQLite 数据库")}</h3><p>{t("账号、备注和同步时间存储在单个本地数据库文件中。")}</p><code>data/mail.sqlite</code></div><span className="config-status">{t("已启用")}</span></div>
+        <div className="settings-professional-row"><span className="settings-icon purple"><ShieldCheck size={20} /></span><div><h3>{t("凭据加密")}</h3><p>{t("密码、Client ID 与 Refresh Token 在写入前使用 AES-256-GCM 加密。")}</p><code>data/.master-key</code></div><span className="config-status">{t("已启用")}</span></div>
+        <div className="settings-professional-row"><span className="settings-icon green"><Cloud size={20} /></span><div><h3>{t("微软邮件连接")}</h3><p>{t("收件使用 IMAP XOAUTH2，发件使用 SMTP OAuth2，不启用过时的基本认证。")}</p><code>IMAP 993 · SMTP 587</code></div><span className="config-status">OAuth2</span></div>
+        <div className="settings-professional-row permission"><span className="settings-icon purple"><KeyRound size={20} /></span><div><h3>{t("发件权限说明")}</h3><p>{t("从部分旧工具取得的令牌仅包含 IMAP 权限，能够收件但不能发件。使用内置授权工具重新申请令牌时，会同时请求 IMAP、SMTP、Graph 和离线刷新权限。")}</p></div><button className="button secondary" onClick={authorize}>{t("重新授权")}</button></div>
+      </div>
+    </section>
   );
 }
 

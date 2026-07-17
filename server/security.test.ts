@@ -255,6 +255,22 @@ describe("multi-tenant account isolation", () => {
     );
     assert.equal(database.getAccountCredentialsBatch("user:202", [alphaId]).length, 0);
   });
+
+  it("scopes batch grouping and deletion to the current owner", () => {
+    const owned = database.listAccounts("user:202");
+    const ownedIds = owned.map((account) => account.id);
+    const foreignId = database.listAccounts("user:101")[0].id;
+
+    assert.equal(database.setAccountsGroup("user:202", ownedIds, "Work"), true);
+    assert.deepEqual(database.listAccounts("user:202").map((account) => account.group), ownedIds.map(() => "Work"));
+    assert.equal(database.setAccountsGroup("user:202", [ownedIds[0], foreignId], "Leaked"), false);
+    assert.equal(database.listAccounts("user:101")[0].group, "");
+
+    assert.equal(database.deleteAccounts("user:202", [ownedIds[0], foreignId]), null);
+    assert.equal(database.listAccounts("user:202").length, ownedIds.length);
+    assert.equal(database.deleteAccounts("user:202", [ownedIds[0]]), 1);
+    assert.equal(database.listAccounts("user:202").length, ownedIds.length - 1);
+  });
 });
 
 after(() => {

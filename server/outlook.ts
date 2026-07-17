@@ -897,8 +897,21 @@ export async function sendMessage(
     subject: string;
     text: string;
     html?: string;
+    attachments?: Array<{
+      filename: string;
+      contentType: string;
+      contentBase64: string;
+      size: number;
+    }>;
   },
 ) {
+  const attachments = (message.attachments || []).map((attachment) => ({
+    // Prevent a supplied path from being interpreted as a local path or from
+    // leaking directory information into the outgoing MIME message.
+    filename: attachment.filename.replace(/[/\\]/g, "_").slice(0, 255),
+    contentType: attachment.contentType,
+    content: Buffer.from(attachment.contentBase64, "base64"),
+  }));
   let accessToken = "";
   let scope = "";
   let lastError: unknown;
@@ -934,6 +947,7 @@ export async function sendMessage(
         subject: message.subject,
         text: message.text,
         html: message.html || undefined,
+        attachments,
       });
       return { messageId: result.messageId, accepted: result.accepted };
     } catch (error) {
@@ -964,6 +978,12 @@ export async function sendMessage(
           toRecipients: parseRecipients(message.to),
           ccRecipients: parseRecipients(message.cc || ""),
           bccRecipients: parseRecipients(message.bcc || ""),
+          attachments: attachments.map((attachment) => ({
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            name: attachment.filename,
+            contentType: attachment.contentType,
+            contentBytes: attachment.content.toString("base64"),
+          })),
         },
         saveToSentItems: true,
       }),

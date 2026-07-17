@@ -32,14 +32,19 @@ import {
   deleteGuestSession,
   deleteUserSession,
   deleteAccount,
+  deleteAccounts,
   getAccountCredentialsBatch,
   getAccountCredentials,
+  getAdminStats,
+  getAdminActivity,
   importAccounts,
   isSetupRequired,
   listAccounts,
   listAnnouncements,
+  listUsersForAdmin,
   markAnnouncementsRead,
   reorderAccounts,
+  setAccountsGroup,
   transferGuestAccounts,
   updateAccount,
 } from "./database";
@@ -74,7 +79,10 @@ if (isProduction) {
 }
 
 app.disable("x-powered-by");
-app.use(express.json({ limit: "2mb" }));
+// Base64 expands attachments by roughly one third. Keep the HTTP ceiling only
+// slightly above the validated 3 MB attachment limit so oversized requests are
+// rejected before they can consume unnecessary memory.
+app.use(express.json({ limit: "5mb" }));
 app.use((request, response, next) => {
   response.setHeader("X-Content-Type-Options", "nosniff");
   response.setHeader("X-Frame-Options", "DENY");
@@ -156,7 +164,7 @@ function limitSend(_request: Request, response: Response, next: NextFunction) {
 function requireAdministrator(_request: Request, response: Response, next: NextFunction) {
   const current = identity(response);
   if (current.kind !== "user" || !current.isAdmin || !current.userId) {
-    response.status(403).json({ error: "仅管理员可以发布公告", code: "ADMIN_REQUIRED" });
+    response.status(403).json({ error: "仅管理员可以执行此操作", code: "ADMIN_REQUIRED" });
     return;
   }
   next();
@@ -327,6 +335,20 @@ app.post("/api/announcements", requireUser, requireAdministrator, (request, resp
   response.status(201).json({ announcement });
 });
 
+app.get("/api/admin/stats", requireUser, requireAdministrator, (_request, response) => {
+  response.json(getAdminStats());
+});
+
+app.get("/api/admin/activity", requireUser, requireAdministrator, (request, response) => {
+  const query = z.object({ days: z.coerce.number().int().min(7).max(30).default(30) }).parse(request.query);
+  response.json({ activity: getAdminActivity(query.days) });
+});
+
+app.get("/api/admin/users", requireUser, requireAdministrator, (_request, response) => {
+  response.setHeader("Cache-Control", "no-store, private");
+  response.json({ users: listUsersForAdmin() });
+});
+
 app.get("/api/accounts", (_request, response) => {
   response.json({ accounts: listAccounts(identity(response).ownerKey) });
 });
@@ -402,8 +424,8 @@ app.put("/api/accounts/order", (request, response) => {
 
 app.patch("/api/accounts/:id", (request, response) => {
   const id = parseId(request.params.id);
-  const body = z.object({ remark: z.string().max(200) }).parse(request.body);
-  const account = updateAccount(identity(response).ownerKey, id, { remark: body.remark });
+  const body = z.object({ remark: z.string().max(200).optional(), group: z.string().trim().max(80).optional() }).refine((value) => value.remark !== undefined || value.group !== undefined).parse(request.body);
+  const account = updateAccount(identity(response).ownerKey, id, body);
   if (!account) {
     response.status(404).json({ error: "邮箱账号不存在" });
     return;
@@ -427,6 +449,30 @@ app.put("/api/accounts/:id/token", (request, response) => {
 app.delete("/api/accounts/:id", (request, response) => {
   const deleted = deleteAccount(identity(response).ownerKey, parseId(request.params.id));
   response.status(deleted ? 204 : 404).end();
+});
+
+app.patch("/api/accounts/batch/group", (request, response) => {
+  const body = z.object({
+    ids: z.array(z.number().int().positive()).min(1).max(100),
+    group: z.string().trim().max(80),
+  }).parse(request.body);
+  if (!setAccountsGroup(identity(response).ownerKey, body.ids, body.group)) {
+    response.status(404).json({ error: "部分邮箱账号不存在" });
+    return;
+  }
+  response.json({ accounts: listAccounts(identity(response).ownerKey) });
+});
+
+app.post("/api/accounts/batch/delete", (request, response) => {
+  const body = z.object({
+    ids: z.array(z.number().int().positive()).min(1).max(100),
+  }).parse(request.body);
+  const deleted = deleteAccounts(identity(response).ownerKey, body.ids);
+  if (deleted === null) {
+    response.status(404).json({ error: "部分邮箱账号不存在" });
+    return;
+  }
+  response.json({ deleted, accounts: listAccounts(identity(response).ownerKey) });
 });
 
 app.post(
@@ -514,9 +560,36 @@ app.post(
         subject: z.string().max(500).default(""),
         text: z.string().max(2_000_000).default(""),
         html: z.string().max(2_000_000).optional(),
+        attachments: z.array(z.object({
+          filename: z.string().trim().min(1).max(255).refine((value) => !/[\u0000-\u001f\u007f]/.test(value), "附件名称不正确"),
+          contentType: z.string().trim().min(1).max(255).regex(/^[\w.+-]+\/[\w.+-]+$/),
+          contentBase64: z.string().min(1).max(4_194_304).regex(/^[A-Za-z0-9+/]*={0,2}$/),
+          size: z.number().int().positive().max(3 * 1024 * 1024),
+        })).max(5).default([]),
       })
       .refine((value) => value.text.trim() || value.html?.trim(), {
         message: "邮件正文不能为空",
+      })
+      .superRefine((value, context) => {
+        let totalBytes = 0;
+        value.attachments.forEach((attachment, index) => {
+          const decodedBytes = Buffer.byteLength(attachment.contentBase64, "base64");
+          totalBytes += decodedBytes;
+          if (Math.abs(decodedBytes - attachment.size) > 2) {
+            context.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["attachments", index, "size"],
+              message: "附件大小与内容不一致",
+            });
+          }
+        });
+        if (totalBytes > 3 * 1024 * 1024) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["attachments"],
+            message: "附件总大小不能超过 3 MB",
+          });
+        }
       })
       .parse(request.body);
     const result = await sendMessage(accountOrThrow(request.params.id, response), body);

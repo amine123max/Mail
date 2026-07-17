@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { blindIndex, decryptSecret, encryptSecret } from "./crypto";
 import type {
   AccountCredentials,
+  AdminUserSummary,
   ImportedAccount,
   PublicAccount,
   StoredAccountRow,
@@ -189,6 +190,9 @@ if (!privacyColumns.some((column) => column.name === "email_hash")) {
 }
 
 const accountColumns = db.prepare("PRAGMA table_info(accounts)").all() as Array<{ name: string }>;
+if (!accountColumns.some((column) => column.name === "group_name")) {
+  db.exec("ALTER TABLE accounts ADD COLUMN group_name TEXT NOT NULL DEFAULT ''");
+}
 if (!accountColumns.some((column) => column.name === "sort_order")) {
   db.exec("ALTER TABLE accounts ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
   const owners = db.prepare("SELECT DISTINCT owner_key FROM accounts").all() as Array<{ owner_key: string }>;
@@ -248,6 +252,7 @@ function createAccountsTable() {
       client_id_encrypted TEXT NOT NULL,
       refresh_token_encrypted TEXT NOT NULL,
       remark TEXT NOT NULL DEFAULT '',
+      group_name TEXT NOT NULL DEFAULT '',
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -262,6 +267,7 @@ function toPublic(row: StoredAccountRow): PublicAccount {
     id: row.id,
     email: decryptSecret(row.email_encrypted),
     remark: row.remark,
+    group: row.group_name,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastSyncAt: row.last_sync_at,
@@ -376,7 +382,7 @@ export function importAccounts(
 export function updateAccount(
   ownerKey: string,
   id: number,
-  changes: { remark?: string; refreshToken?: string; lastSync?: boolean },
+  changes: { remark?: string; group?: string; refreshToken?: string; lastSync?: boolean },
 ): PublicAccount | null {
   const row = asStored(
     db.prepare("SELECT * FROM accounts WHERE owner_key = ? AND id = ?").get(ownerKey, id),
@@ -385,11 +391,12 @@ export function updateAccount(
 
   db.prepare(`
     UPDATE accounts
-      SET remark = ?, refresh_token_encrypted = ?,
+      SET remark = ?, group_name = ?, refresh_token_encrypted = ?,
           last_sync_at = ?, updated_at = CURRENT_TIMESTAMP
       WHERE owner_key = ? AND id = ?
   `).run(
     changes.remark ?? row.remark,
+    changes.group ?? row.group_name,
     changes.refreshToken ? encryptSecret(changes.refreshToken) : row.refresh_token_encrypted,
     changes.lastSync ? new Date().toISOString() : row.last_sync_at,
     ownerKey,
@@ -421,6 +428,51 @@ export function markAccountSynced(ownerKey: string, id: number): void {
 export function deleteAccount(ownerKey: string, id: number): boolean {
   const result = db.prepare("DELETE FROM accounts WHERE owner_key = ? AND id = ?").run(ownerKey, id);
   return result.changes > 0;
+}
+
+function ownedAccountIds(ownerKey: string, ids: number[]): number[] | null {
+  const uniqueIds = Array.from(new Set(ids));
+  if (!uniqueIds.length) return null;
+  const placeholders = uniqueIds.map(() => "?").join(", ");
+  const rows = db
+    .prepare(`SELECT id FROM accounts WHERE owner_key = ? AND id IN (${placeholders})`)
+    .all(ownerKey, ...uniqueIds) as Array<{ id: number }>;
+  return rows.length === uniqueIds.length ? uniqueIds : null;
+}
+
+export function setAccountsGroup(ownerKey: string, ids: number[], group: string): boolean {
+  const ownedIds = ownedAccountIds(ownerKey, ids);
+  if (!ownedIds) return false;
+  const update = db.prepare(`
+    UPDATE accounts
+      SET group_name = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE owner_key = ? AND id = ?
+  `);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    ownedIds.forEach((id) => update.run(group, ownerKey, id));
+    db.exec("COMMIT");
+    return true;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function deleteAccounts(ownerKey: string, ids: number[]): number | null {
+  const ownedIds = ownedAccountIds(ownerKey, ids);
+  if (!ownedIds) return null;
+  const remove = db.prepare("DELETE FROM accounts WHERE owner_key = ? AND id = ?");
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    let deleted = 0;
+    ownedIds.forEach((id) => { deleted += Number(remove.run(ownerKey, id).changes); });
+    db.exec("COMMIT");
+    return deleted;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export function reorderAccounts(ownerKey: string, ids: number[]): boolean {
@@ -546,6 +598,62 @@ export function findUserByEmail(email: string): UserRow | null {
     (db.prepare("SELECT * FROM users WHERE email_hash = ?").get(blindIndex(email)) as UserRow | undefined) ||
     null
   );
+}
+
+export function getAdminStats(): { users: number; mailboxAccounts: number; activeGuests: number; announcements: number } {
+  const now = new Date().toISOString();
+  return {
+    users: Number((db.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number }).count),
+    mailboxAccounts: Number((db.prepare("SELECT COUNT(*) AS count FROM accounts").get() as { count: number }).count),
+    activeGuests: Number((db.prepare("SELECT COUNT(*) AS count FROM guest_sessions WHERE expires_at > ?").get(now) as { count: number }).count),
+    announcements: Number((db.prepare("SELECT COUNT(*) AS count FROM announcements").get() as { count: number }).count),
+  };
+}
+
+export function getAdminActivity(days: number): Array<{ date: string; users: number; accounts: number; guests: number; announcements: number }> {
+  const normalizedDays = Math.max(7, Math.min(30, Math.trunc(days)));
+  const dates = Array.from({ length: normalizedDays }, (_, index) => {
+    const date = new Date();
+    date.setUTCHours(0, 0, 0, 0);
+    date.setUTCDate(date.getUTCDate() - (normalizedDays - index - 1));
+    return date.toISOString().slice(0, 10);
+  });
+  const firstDate = `${dates[0]} 00:00:00`;
+  const counts = (table: "users" | "accounts" | "guest_sessions" | "announcements") => new Map(
+    (db.prepare(`SELECT substr(created_at, 1, 10) AS date, COUNT(*) AS count FROM ${table} WHERE created_at >= ? GROUP BY substr(created_at, 1, 10)`).all(firstDate) as Array<{ date: string; count: number }>)
+      .map((row) => [row.date, Number(row.count)]),
+  );
+  const users = counts("users");
+  const accounts = counts("accounts");
+  const guests = counts("guest_sessions");
+  const announcements = counts("announcements");
+  return dates.map((date) => ({ date, users: users.get(date) || 0, accounts: accounts.get(date) || 0, guests: guests.get(date) || 0, announcements: announcements.get(date) || 0 }));
+}
+
+export function listUsersForAdmin(): AdminUserSummary[] {
+  const rows = db.prepare(`
+    SELECT users.id, users.username, users.email_encrypted, users.is_admin,
+           users.created_at, COUNT(accounts.id) AS account_count
+    FROM users
+    LEFT JOIN accounts ON accounts.owner_key = 'user:' || users.id
+    GROUP BY users.id
+    ORDER BY users.created_at DESC, users.id DESC
+  `).all() as Array<{
+    id: number;
+    username: string;
+    email_encrypted: string | null;
+    is_admin: number;
+    created_at: string;
+    account_count: number;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    username: row.username,
+    email: row.email_encrypted ? decryptSecret(row.email_encrypted) : "",
+    administrator: Boolean(row.is_admin),
+    accountCount: Number(row.account_count),
+    createdAt: row.created_at,
+  }));
 }
 
 export function createUser(
