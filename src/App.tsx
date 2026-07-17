@@ -353,17 +353,20 @@ function App() {
   useEffect(() => {
     if (!appEntering) return;
     setAppRevealReady(false);
+    const mobileEntry = window.matchMedia("(max-width: 980px)").matches;
+    const revealDelay = mobileEntry ? 700 : 140;
+    const completionDelay = mobileEntry ? 5000 : 4000;
     let secondFrame = 0;
     let revealTimer = 0;
     const firstFrame = window.requestAnimationFrame(() => {
       secondFrame = window.requestAnimationFrame(() => {
-        revealTimer = window.setTimeout(() => setAppRevealReady(true), 140);
+        revealTimer = window.setTimeout(() => setAppRevealReady(true), revealDelay);
       });
     });
     const timer = window.setTimeout(() => {
       setAppEntering(false);
       setAppRevealReady(false);
-    }, 1450);
+    }, completionDelay);
     return () => {
       window.cancelAnimationFrame(firstFrame);
       if (secondFrame) window.cancelAnimationFrame(secondFrame);
@@ -950,7 +953,14 @@ function App() {
         </div>
       )}
 
-      <div className="workspace">
+      <div
+        className="workspace"
+        onAnimationEnd={(event) => {
+          if (!appEntering || !appRevealReady || event.target !== event.currentTarget || event.animationName !== "app-entry-radial") return;
+          setAppEntering(false);
+          setAppRevealReady(false);
+        }}
+      >
         <header className="topbar">
           <button className="mobile-menu" onClick={() => { setMobileNavClosing(false); setMobileNavOpen(true); }}><Menu size={19} /></button>
           <form className="search-box" onSubmit={(event) => { event.preventDefault(); setMailPage(1); setActiveSearch(search.trim()); }}>
@@ -1151,7 +1161,16 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
     }
   };
 
-  const beginSuccessTransition = (complete: () => void) => {
+  const beginSuccessTransition = async (complete: () => void) => {
+    await document.fonts?.ready.catch(() => undefined);
+    await Promise.all([
+      brandPlaneRef.current?.decode().catch(() => undefined),
+      desktopFlightTargetRef.current?.querySelector<HTMLImageElement>(".brand-mark img")?.decode().catch(() => undefined),
+      mobileFlightTargetRef.current?.querySelector<HTMLImageElement>(".empty-brand img")?.decode().catch(() => undefined),
+    ]);
+    await new Promise<void>((resolve) => {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
+    });
     const planeRect = brandPlaneRef.current?.getBoundingClientRect();
     if (!planeRect) {
       complete();
@@ -1173,6 +1192,8 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
     const finalControlY = desktopTarget ? height * .06 : height * .28;
     const finalTangent = Math.atan2(endY - finalControlY, endX - finalControlX) * 180 / Math.PI;
     setFlightPlane({ width: targetSize, height: targetSize, initialScale: planeRect.width / targetSize, finalScale: 1, finalRotation: -(finalTangent + 30) });
+    document.documentElement.style.setProperty("--app-entry-workspace-origin-x", `${endX - (desktopTarget ? 244 : 0)}px`);
+    document.documentElement.style.setProperty("--app-entry-workspace-origin-y", `${endY}px`);
     if (!desktopTarget) {
       document.documentElement.style.setProperty("--app-entry-mobile-plane-left", `${targetLeft}px`);
       document.documentElement.style.setProperty("--app-entry-mobile-plane-top", `${targetTop}px`);
@@ -1201,7 +1222,7 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
         : { username, email, password, verificationCode };
       const result = await api<{ username: string; administrator?: boolean }>(endpoint, { method: "POST", body: JSON.stringify(body) });
       const user = { username: result.username, administrator: Boolean(result.administrator) };
-      if (mode === "setup") onLogin(user); else beginSuccessTransition(() => onLogin(user));
+      if (mode === "setup") onLogin(user); else await beginSuccessTransition(() => onLogin(user));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "登录失败");
     } finally {
@@ -1213,7 +1234,7 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
     setError("");
     try {
       await api("/api/auth/guest", { method: "POST" });
-      beginSuccessTransition(onGuest);
+      await beginSuccessTransition(onGuest);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : t("进入游客模式失败"));
     } finally {
