@@ -966,7 +966,6 @@ function App() {
           <form className="search-box" onSubmit={(event) => { event.preventDefault(); setMailPage(1); setActiveSearch(search.trim()); }}>
             <Search size={16} />
             <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("搜索邮件主题、发件人或正文…")} />
-            <kbd>↵</kbd>
           </form>
           <div className="top-actions">
             {authState === "guest" && <span className="guest-badge" aria-label={t("游客模式")} title={t("游客模式")}><UserRound size={14} /><span>{t("游客模式")}</span></span>}

@@ -147,7 +147,6 @@ button { color: inherit; }
 .search-box:focus-within { border-color: var(--border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent); }
 .search-box input { min-width: 0; flex: 1; border: 0; outline: 0; color: var(--foreground); background: transparent; font-size: 12px; }
 .search-box input::placeholder { color: var(--muted-2); }
-.search-box kbd { padding: 2px 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-soft); color: var(--muted-2); font: 9px monospace; }
 .top-actions { display: flex; align-items: center; gap: 7px; margin-left: auto; }
 .guest-badge { height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 9px; border: 0; border-radius: 20px; color: var(--muted); background: transparent; font-size: 10px; }
 .icon-button { width: 34px; height: 34px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--muted); }
@@ -157,7 +156,7 @@ button { color: inherit; }
 .profile-avatar { width: 32px; height: 32px; display: grid; place-items: center; margin-left: 3px; border-radius: 50%; color: #fff; background: linear-gradient(145deg, #71717a, #27272a); font-size: 11px; font-weight: 700; }
 .profile-button { padding: 0; border: 0; }
 
-.main-content { width: 100%; max-width: 1480px; margin: 0 auto; padding: 28px 30px 34px; }
+.main-content { width: 100%; max-width: 1480px; margin: 0 auto; padding: 14px 30px 30px; }
 .main-content.inbox-content { max-width: none; padding: 0; }
 .page-header { min-height: 62px; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 22px; }
 .eyebrow { display: block; margin-bottom: 6px; color: var(--accent); font-size: 9px; font-weight: 700; letter-spacing: .18em; }
@@ -543,6 +542,7 @@ button { color: inherit; }
 .accounts-professional-page { display: grid; gap: 18px; }
 .accounts-professional-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
 .accounts-professional-head > div:first-child { display: grid; gap: 5px; }
+.accounts-professional-head h1, .oauth-page-head h1 { margin: 0; line-height: 1.15; }
 .accounts-professional-head p, .oauth-page-head p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .accounts-count { min-width: 90px; display: flex; align-items: baseline; justify-content: flex-end; gap: 6px; color: var(--muted); }
 .accounts-count strong { color: var(--foreground); font: 700 25px/1 "Satoshi", sans-serif; }
@@ -858,10 +858,9 @@ button { color: inherit; }
   .topbar { gap: 9px; padding-inline: 12px; }
   .search-box { width: auto; min-width: 0; flex: 1; }
   .top-actions { flex: none; }
-  .search-box kbd { display: none; }
   .guest-badge { width: 34px; height: 34px; justify-content: center; flex: none; padding: 0; }
   .guest-badge > span { display: none; }
-  .main-content { padding: 20px 12px 24px; }
+  .main-content { padding: 12px 12px 24px; }
   .page-header { align-items: flex-start; flex-direction: column; gap: 14px; }
   .page-actions { width: 100%; flex-wrap: wrap; }
   .page-actions .account-picker { max-width: none; flex: 1; }
