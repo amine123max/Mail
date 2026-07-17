@@ -10,6 +10,7 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  Clock3,
   Eraser,
   Eye,
   FileUp,
@@ -20,10 +21,12 @@ import {
   List,
   ListOrdered,
   MoreHorizontal,
+  Minus,
   Palette,
   Paperclip,
   PenLine,
   Redo2,
+  Quote,
   Save,
   Send,
   Settings2,
@@ -133,9 +136,14 @@ export function ComposePage({
   const [emojiMenuPosition, setEmojiMenuPosition] = useState({ left: 12, top: 80 });
   const [formatMoreOpen, setFormatMoreOpen] = useState(false);
   const [formatMorePosition, setFormatMorePosition] = useState({ left: 12, top: 80 });
+  const [insertMoreOpen, setInsertMoreOpen] = useState(false);
+  const [insertMorePosition, setInsertMorePosition] = useState({ left: 12, top: 80 });
+  const [fontMenu, setFontMenu] = useState<"family" | "size" | null>(null);
+  const [fontMenuPosition, setFontMenuPosition] = useState({ left: 12, top: 80 });
   const [previewOpen, setPreviewOpen] = useState(false);
   const saveTimerRef = useRef<number | null>(null);
   const editorRef = useRef<HTMLDivElement | null>(null);
+  const editorSelectionRef = useRef<Range | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const attachmentButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -143,6 +151,9 @@ export function ComposePage({
   const settingsButtonRef = useRef<HTMLButtonElement | null>(null);
   const emojiButtonRef = useRef<HTMLButtonElement | null>(null);
   const formatMoreButtonRef = useRef<HTMLButtonElement | null>(null);
+  const insertMoreButtonRef = useRef<HTMLButtonElement | null>(null);
+  const fontFamilyRef = useRef<HTMLSpanElement | null>(null);
+  const fontSizeRef = useRef<HTMLSpanElement | null>(null);
   const selectedAccount = accounts.find((account) => account.id === accountId) || null;
   const canSend = Boolean(accountId && to.trim() && text.trim());
 
@@ -165,21 +176,48 @@ export function ComposePage({
     };
   }, [accountId, bcc, cc, html, subject, text, to]);
 
+  const captureEditorSelection = () => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    const container = range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+      ? range.commonAncestorContainer.parentNode
+      : range.commonAncestorContainer;
+    if (container && editor.contains(container)) editorSelectionRef.current = range.cloneRange();
+  };
+
+  const restoreEditorSelection = () => {
+    const editor = editorRef.current;
+    const range = editorSelectionRef.current;
+    if (!editor || !range) return;
+    const container = range.commonAncestorContainer.nodeType === Node.TEXT_NODE
+      ? range.commonAncestorContainer.parentNode
+      : range.commonAncestorContainer;
+    if (!container || !editor.contains(container)) return;
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  };
+
   const syncEditor = () => {
     const editor = editorRef.current;
     if (!editor) return;
     setHtml(editor.innerHTML);
     setText(editor.innerText.replace(/\u00a0/g, " "));
+    captureEditorSelection();
   };
 
   const format = (command: string, value?: string) => {
     editorRef.current?.focus();
+    restoreEditorSelection();
     document.execCommand(command, false, value);
     syncEditor();
   };
 
   const insertText = (value: string) => {
     editorRef.current?.focus();
+    restoreEditorSelection();
     document.execCommand("insertText", false, value);
     syncEditor();
   };
@@ -278,6 +316,38 @@ export function ComposePage({
     setFormatMoreOpen(true);
   };
 
+  const toggleInsertMore = () => {
+    if (insertMoreOpen) {
+      setInsertMoreOpen(false);
+      return;
+    }
+    const rect = insertMoreButtonRef.current?.getBoundingClientRect();
+    if (rect) {
+      const panelWidth = Math.min(160, window.innerWidth - 24);
+      setInsertMorePosition({
+        left: Math.max(12, Math.min(rect.right - panelWidth, window.innerWidth - panelWidth - 12)),
+        top: Math.min(rect.bottom + 5, window.innerHeight - 150),
+      });
+    }
+    setInsertMoreOpen(true);
+  };
+
+  const toggleFontMenu = (menu: "family" | "size", target: HTMLElement | null) => {
+    if (fontMenu === menu) {
+      setFontMenu(null);
+      return;
+    }
+    const rect = target?.getBoundingClientRect();
+    if (rect) {
+      const panelWidth = Math.min(150, window.innerWidth - 24);
+      setFontMenuPosition({
+        left: Math.max(12, Math.min(rect.left, window.innerWidth - panelWidth - 12)),
+        top: Math.min(rect.bottom + 5, window.innerHeight - 190),
+      });
+    }
+    setFontMenu(menu);
+  };
+
   return (
     <section className="compose-page">
       <header className="compose-command-bar">
@@ -320,7 +390,7 @@ export function ComposePage({
           <label className="compose-field"><span>{t("主题")}</span><input value={subject} onChange={(event) => setSubject(event.target.value)} placeholder={t("邮件主题")} /></label>
         </div>
 
-        <div className="compose-insert-toolbar">
+        <div className="compose-insert-toolbar" onMouseDown={(event) => { if ((event.target as HTMLElement).closest("button, [role='button']")) event.preventDefault(); }}>
           <button onClick={() => format("undo")} aria-label={t("撤销")}><Undo2 size={16} /></button>
           <button onClick={() => format("redo")} aria-label={t("重做")}><Redo2 size={16} /></button>
           <span />
@@ -334,13 +404,15 @@ export function ComposePage({
           </div>
           <span className="compose-toolbar-spacer" />
           <button onClick={insertSignature}><PenLine size={16} /> {t("签名")} <ChevronDown size={13} /></button>
-          <button aria-label={t("更多")}><MoreHorizontal size={17} /></button>
+          <button ref={insertMoreButtonRef} onClick={toggleInsertMore} aria-label={t("更多插入选项")} aria-expanded={insertMoreOpen}><MoreHorizontal size={17} /></button>
+          {insertMoreOpen && <><button type="button" className="compose-menu-dismiss" aria-label={t("关闭")} onClick={() => setInsertMoreOpen(false)} /><div className="compose-insert-more-popover" style={insertMorePosition}><button onClick={() => { format("insertHorizontalRule"); setInsertMoreOpen(false); }}><Minus size={15} />{t("插入分隔线")}</button><button onClick={() => { format("formatBlock", "blockquote"); setInsertMoreOpen(false); }}><Quote size={15} />{t("引用段落")}</button><button onClick={() => { insertText(new Date().toLocaleTimeString(language === "en" ? "en-US" : "zh-CN", { hour: "2-digit", minute: "2-digit" })); setInsertMoreOpen(false); }}><Clock3 size={15} />{t("插入当前时间")}</button></div></>}
         </div>
 
-        <div className="compose-format-toolbar">
+        <div className="compose-format-toolbar" onMouseDown={(event) => { if ((event.target as HTMLElement).closest("button, [role='button']")) event.preventDefault(); }}>
           <button onClick={() => format("removeFormat")} aria-label={t("清除格式")}><Eraser size={16} /></button>
-          <span className="compose-format-select"><Type size={15} /> {t("默认字体")} <ChevronDown size={12} /></span>
-          <span className="compose-format-select"><ALargeSmall size={15} /> {t("字号")} <ChevronDown size={12} /></span>
+          <span ref={fontFamilyRef} className="compose-format-select" role="button" tabIndex={0} aria-expanded={fontMenu === "family"} onClick={() => toggleFontMenu("family", fontFamilyRef.current)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") toggleFontMenu("family", fontFamilyRef.current); }}><Type size={15} /> {t("默认字体")} <ChevronDown size={12} /></span>
+          <span ref={fontSizeRef} className="compose-format-select" role="button" tabIndex={0} aria-expanded={fontMenu === "size"} onClick={() => toggleFontMenu("size", fontSizeRef.current)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") toggleFontMenu("size", fontSizeRef.current); }}><ALargeSmall size={15} /> {t("字号")} <ChevronDown size={12} /></span>
+          {fontMenu && <><button type="button" className="compose-menu-dismiss" aria-label={t("关闭")} onClick={() => setFontMenu(null)} /><div className="compose-font-popover" style={fontMenuPosition}>{fontMenu === "family" ? <><button onClick={() => { format("fontName", "Satoshi"); setFontMenu(null); }} style={{ fontFamily: "Satoshi, sans-serif" }}>{t("默认字体")}</button><button onClick={() => { format("fontName", "Arial"); setFontMenu(null); }} style={{ fontFamily: "Arial, sans-serif" }}>Arial</button><button onClick={() => { format("fontName", "Georgia"); setFontMenu(null); }} style={{ fontFamily: "Georgia, serif" }}>Georgia</button><button onClick={() => { format("fontName", "monospace"); setFontMenu(null); }} style={{ fontFamily: "monospace" }}>Monospace</button></> : <><button onClick={() => { format("fontSize", "2"); setFontMenu(null); }}>{t("小号")}</button><button onClick={() => { format("fontSize", "3"); setFontMenu(null); }}>{t("标准字号")}</button><button onClick={() => { format("fontSize", "5"); setFontMenu(null); }}>{t("大号")}</button><button onClick={() => { format("fontSize", "7"); setFontMenu(null); }}>{t("超大")}</button></>}</div></>}
           <button onClick={() => format("bold")} aria-label={t("粗体")}><Bold size={16} /></button>
           <button onClick={() => format("italic")} aria-label={t("斜体")}><Italic size={16} /></button>
           <button onClick={() => format("strikeThrough")} aria-label={t("删除线")}><Strikethrough size={16} /></button>
@@ -358,7 +430,7 @@ export function ComposePage({
         {attachments.length > 0 && <div className="compose-attachments"><Paperclip size={15} />{attachments.map((attachment, index) => <span key={`${attachment.filename}-${index}`}><strong>{attachment.filename}</strong><small>{Math.max(1, Math.round(attachment.size / 1024))} KB</small><button onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={t("移除附件")}><X size={13} /></button></span>)}</div>}
 
         <div className="compose-editor-head"><strong>{t("邮件正文")}</strong><span>{text.length.toLocaleString()} / 2,000,000</span></div>
-        <div ref={editorRef} className="compose-rich-editor" contentEditable suppressContentEditableWarning data-placeholder={t("输入邮件正文…")} dangerouslySetInnerHTML={{ __html: initialDraft.html || initialDraft.text.replace(/\n/g, "<br>") }} onInput={syncEditor} />
+        <div ref={editorRef} className="compose-rich-editor" contentEditable suppressContentEditableWarning data-placeholder={t("输入邮件正文…")} dangerouslySetInnerHTML={{ __html: initialDraft.html || initialDraft.text.replace(/\n/g, "<br>") }} onInput={syncEditor} onMouseUp={captureEditorSelection} onKeyUp={captureEditorSelection} onBlur={captureEditorSelection} />
 
         <footer className="compose-page-foot">
           <div className="compose-sender-summary"><span className="compose-sender-avatar"><UserRound size={18} /></span><div><strong>{selectedAccount?.remark || selectedAccount?.email.split("@")[0] || t("未选择邮箱")}</strong><span>{selectedAccount?.email || t("选择发件邮箱后即可发送")}</span></div></div>

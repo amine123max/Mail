@@ -493,6 +493,8 @@ button { color: inherit; }
 .compose-format-toolbar > button { width: 34px; padding: 0; }
 .compose-format-toolbar > button:last-of-type { display: none; }
 .compose-format-select { min-height: 32px; display: inline-flex; align-items: center; gap: 6px; flex: none; padding: 0 9px; border-right: 1px solid var(--border); color: var(--foreground); font-size: 10px; }
+.compose-format-select[role="button"] { cursor: pointer; border-radius: 5px; outline: 0; }
+.compose-format-select[role="button"]:hover, .compose-format-select[role="button"]:focus-visible, .compose-format-select[aria-expanded="true"] { background: color-mix(in srgb, var(--surface) 72%, transparent); }
 .compose-format-select:first-of-type { min-width: 104px; }
 .compose-emoji-menu { position: relative; display: flex; flex: none; }
 .compose-emoji-popover { position: fixed; z-index: 60; width: min(286px, calc(100vw - 24px)); display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; padding: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: 0 16px 46px rgba(0,0,0,.18); animation: menu-pop .14s ease; }
@@ -501,6 +503,10 @@ button { color: inherit; }
 .compose-format-more-popover { position: fixed; z-index: 60; width: min(150px, calc(100vw - 24px)); display: grid; gap: 2px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 14px 40px rgba(0,0,0,.16); animation: menu-pop .14s ease; }
 .compose-format-more-popover > button { width: 100%; min-height: 30px; display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 0 8px; border: 0; border-radius: 5px; color: var(--foreground); background: transparent; font-size: 9px; text-align: left; }
 .compose-format-more-popover > button:hover { background: var(--surface-soft); }
+.compose-insert-more-popover, .compose-font-popover { position: fixed; z-index: 60; width: min(160px, calc(100vw - 24px)); display: grid; gap: 2px; padding: 5px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: 0 14px 40px rgba(0,0,0,.16); animation: menu-pop .14s ease; }
+.compose-font-popover { width: min(150px, calc(100vw - 24px)); }
+.compose-insert-more-popover > button, .compose-font-popover > button { width: 100%; min-height: 31px; display: flex; align-items: center; justify-content: flex-start; gap: 8px; padding: 0 8px; border: 0; border-radius: 5px; color: var(--foreground); background: transparent; font-size: 9px; text-align: left; }
+.compose-insert-more-popover > button:hover, .compose-font-popover > button:hover { background: var(--surface-soft); }
 .compose-attachments { min-height: 46px; display: flex; align-items: center; gap: 8px; flex: none; padding: 6px 0; overflow-x: auto; border-bottom: 1px solid var(--border); color: var(--muted); scrollbar-width: none; }
 .compose-attachments::-webkit-scrollbar { display: none; }
 .compose-attachments > span { min-width: 0; max-width: 250px; height: 32px; display: flex; align-items: center; gap: 7px; flex: none; padding: 0 6px 0 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-soft); }
@@ -940,8 +946,8 @@ button { color: inherit; }
   .compose-format-toolbar .compose-format-select .lucide-chevron-down { display: none; }
   .compose-insert-toolbar { gap: 2px; overflow: hidden; }
   .compose-insert-toolbar > span:not(.compose-toolbar-spacer) { margin-inline: 2px; }
-  .compose-insert-toolbar button { width: 32px; padding: 0; gap: 0; overflow: hidden; font-size: 0; }
-  .compose-insert-toolbar button svg { flex: none; }
+  .compose-insert-toolbar > button, .compose-insert-toolbar > .compose-emoji-menu > button { width: 32px; padding: 0; gap: 0; overflow: hidden; font-size: 0; }
+  .compose-insert-toolbar > button svg, .compose-insert-toolbar > .compose-emoji-menu > button svg { flex: none; }
   .compose-insert-toolbar .compose-toolbar-spacer { min-width: 0; }
   .compose-rich-editor { font-size: 11px; }
   .compose-page-foot { min-height: 64px; }
