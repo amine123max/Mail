@@ -40,6 +40,9 @@ func TestDesktopCapabilitiesLegacyAndVersionedRoutes(t *testing.T) {
 		if body.Features == nil || body.Limits.MaxJsonRequestBytes == 0 || len(body.Sync.Providers) == 0 {
 			t.Fatalf("%s omitted generated capability fields: %#v", path, body)
 		}
+		if !body.Features["incrementalSync"] || !body.Sync.Incremental || !body.Sync.CursorReset {
+			t.Fatalf("%s did not advertise the implemented sync protocol: %#v", path, body)
+		}
 	}
 }
 

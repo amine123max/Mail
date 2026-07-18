@@ -42,7 +42,7 @@ func (s *Server) desktopCapabilities(response http.ResponseWriter, _ *http.Reque
 		LatestClientVersion:  latestVersion,
 		Features: map[string]bool{
 			"deviceSessions":     true,
-			"incrementalSync":    false,
+			"incrementalSync":    true,
 			"attachmentDownload": false,
 			"maintenanceMode":    true,
 		},
@@ -55,8 +55,8 @@ func (s *Server) desktopCapabilities(response http.ResponseWriter, _ *http.Reque
 		Sync: desktopcontract.DesktopSyncCapabilities{
 			ProtocolVersion: 1,
 			Providers:       []string{"graph", "imap"},
-			Incremental:     false,
-			CursorReset:     false,
+			Incremental:     true,
+			CursorReset:     true,
 		},
 		Maintenance: desktopcontract.DesktopMaintenanceState{
 			Active:     s.cfg.DesktopMaintenance,
