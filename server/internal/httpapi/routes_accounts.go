@@ -2,12 +2,13 @@ package httpapi
 
 import (
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/amine123max/Mail/server/internal/importer"
 	"github.com/amine123max/Mail/server/internal/store"
 )
+
+const guestAccountLimit = 3
 
 func (s *Server) listAccounts(response http.ResponseWriter, request *http.Request) error {
 	accounts, err := s.store.ListAccounts(request.Context(), identityFrom(request).OwnerKey)
@@ -42,28 +43,26 @@ func (s *Server) importAccounts(response http.ResponseWriter, request *http.Requ
 		return nil
 	}
 	identity := identityFrom(request)
-	accountLimit := 100
 	if identity.Kind == "guest" {
-		accountLimit = 3
-	}
-	existing, err := s.store.ListAccounts(request.Context(), identity.OwnerKey)
-	if err != nil {
-		return err
-	}
-	emails := make(map[string]struct{}, len(existing))
-	for _, account := range existing {
-		emails[strings.ToLower(account.Email)] = struct{}{}
-	}
-	newEmails := make(map[string]struct{})
-	for _, account := range parsed.Accounts {
-		email := strings.ToLower(account.Email)
-		if _, exists := emails[email]; !exists {
-			newEmails[email] = struct{}{}
+		existing, err := s.store.ListAccounts(request.Context(), identity.OwnerKey)
+		if err != nil {
+			return err
 		}
-	}
-	if len(existing)+len(newEmails) > accountLimit {
-		writeJSON(response, http.StatusForbidden, map[string]any{"error": "当前身份最多可保存 " + strconv.Itoa(accountLimit) + " 个邮箱账号", "code": "ACCOUNT_LIMIT_REACHED"})
-		return nil
+		emails := make(map[string]struct{}, len(existing))
+		for _, account := range existing {
+			emails[strings.ToLower(account.Email)] = struct{}{}
+		}
+		newEmails := make(map[string]struct{})
+		for _, account := range parsed.Accounts {
+			email := strings.ToLower(account.Email)
+			if _, exists := emails[email]; !exists {
+				newEmails[email] = struct{}{}
+			}
+		}
+		if len(existing)+len(newEmails) > guestAccountLimit {
+			writeJSON(response, http.StatusForbidden, map[string]any{"error": "游客模式最多可保存 3 个邮箱账号", "code": "ACCOUNT_LIMIT_REACHED"})
+			return nil
+		}
 	}
 	result, err := s.store.ImportAccounts(request.Context(), identity.OwnerKey, parsed.Accounts, body.Mode)
 	if err != nil {
@@ -84,7 +83,7 @@ func (s *Server) exportAccounts(response http.ResponseWriter, request *http.Requ
 	if err := decodeJSON(response, request, &body); err != nil {
 		return err
 	}
-	if len(body.IDs) < 1 || len(body.IDs) > 100 || !positiveIDs(body.IDs) {
+	if !accountIDsAllowed(request, body.IDs) {
 		return validation("邮箱账号 ID 列表无效")
 	}
 	accounts, err := s.store.GetAccountCredentialsBatch(request.Context(), identityFrom(request).OwnerKey, body.IDs)
@@ -107,7 +106,7 @@ func (s *Server) orderAccounts(response http.ResponseWriter, request *http.Reque
 	if err := decodeJSON(response, request, &body); err != nil {
 		return err
 	}
-	if len(body.IDs) < 1 || len(body.IDs) > 100 || !positiveIDs(body.IDs) {
+	if !accountIDsAllowed(request, body.IDs) {
 		return validation("邮箱账号顺序无效")
 	}
 	ok, err := s.store.ReorderAccounts(request.Context(), identityFrom(request).OwnerKey, body.IDs)
@@ -203,7 +202,7 @@ func (s *Server) groupAccounts(response http.ResponseWriter, request *http.Reque
 		return err
 	}
 	body.Group = strings.TrimSpace(body.Group)
-	if len(body.IDs) < 1 || len(body.IDs) > 100 || !positiveIDs(body.IDs) || len([]rune(body.Group)) > 80 {
+	if !accountIDsAllowed(request, body.IDs) || len([]rune(body.Group)) > 80 {
 		return validation("账号 ID 或分组无效")
 	}
 	ok, err := s.store.SetAccountsGroup(request.Context(), identityFrom(request).OwnerKey, body.IDs, body.Group)
@@ -224,7 +223,7 @@ func (s *Server) deleteAccounts(response http.ResponseWriter, request *http.Requ
 	if err := decodeJSON(response, request, &body); err != nil {
 		return err
 	}
-	if len(body.IDs) < 1 || len(body.IDs) > 100 || !positiveIDs(body.IDs) {
+	if !accountIDsAllowed(request, body.IDs) {
 		return validation("邮箱账号 ID 列表无效")
 	}
 	deleted, err := s.store.DeleteAccounts(request.Context(), identityFrom(request).OwnerKey, body.IDs)
@@ -250,6 +249,14 @@ func positiveIDs(ids []int64) bool {
 		}
 	}
 	return true
+}
+
+func accountIDsAllowed(request *http.Request, ids []int64) bool {
+	if len(ids) < 1 || !positiveIDs(ids) {
+		return false
+	}
+	identity := identityFrom(request)
+	return identity == nil || identity.Kind != "guest" || len(ids) <= guestAccountLimit
 }
 
 func uniqueCount(ids []int64) int {

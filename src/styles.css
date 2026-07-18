@@ -94,6 +94,7 @@ button { color: inherit; }
 .language-toggle.compact { height: 29px; min-width: 42px; padding: 0 8px; font-size: 10px; }
 .dark .side-nav > button em { color: #111; background: #f5f5f5; }
 .side-accounts { flex: none; margin-top: 27px; overflow: visible; }
+.side-accounts.is-dragging { user-select: none; }
 .side-section-title { display: flex; align-items: center; justify-content: space-between; margin: 0 7px 9px; color: var(--muted-2); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .side-section-title button, .side-accounts button { border: 0; background: transparent; }
 .side-section-actions { display: flex; align-items: center; gap: 1px; }
@@ -106,7 +107,7 @@ button { color: inherit; }
 .account-search button:hover { color: var(--foreground); background: color-mix(in srgb, var(--surface) 72%, transparent); }
 .account-mini { position: relative; width: 100%; display: flex; align-items: center; min-height: 44px; border-radius: 7px; text-align: left; transition: opacity .16s ease, background .16s ease; }
 .account-mini:hover, .account-mini.active { background: var(--surface-soft); }
-.account-mini.drag-source { pointer-events: none; opacity: .18; }
+.account-mini.drag-source { pointer-events: none; opacity: .14; }
 .account-mini-main { min-width: 0; display: flex; align-items: center; flex: 1; gap: 9px; align-self: stretch; padding: 7px; border-radius: 7px; text-align: left; touch-action: pan-y; }
 .mini-avatar { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--foreground); font-size: 11px; font-weight: 700; }
 .account-mini-copy { min-width: 0; display: grid; flex: 1; gap: 1px; }
@@ -121,7 +122,7 @@ button { color: inherit; }
 .account-menu button { width: 100%; height: 36px; display: flex; align-items: center; gap: 9px; padding: 0 10px; border-radius: 8px; color: var(--foreground); background: transparent; font-size: 11px; text-align: left; }
 .account-menu button:hover { background: var(--surface-soft); }
 .account-menu .account-menu-delete { color: #e5484d; }
-.account-drag-ghost { position: fixed; z-index: 160; display: flex; align-items: center; gap: 9px; padding: 7px; pointer-events: none; border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border)); border-radius: 9px; color: var(--foreground); background: color-mix(in srgb, var(--surface) 94%, transparent); box-shadow: 0 18px 48px rgba(0,0,0,.2); transform: scale(1.015); }
+.account-drag-ghost { position: fixed; z-index: 160; display: flex; align-items: center; gap: 9px; padding: 7px; pointer-events: none; border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border)); border-radius: 9px; color: var(--foreground); background: color-mix(in srgb, var(--surface) 94%, transparent); box-shadow: 0 14px 34px rgba(0,0,0,.18); contain: layout paint style; transform: translate3d(0,0,0) scale(1.015); transform-origin: center; backface-visibility: hidden; will-change: transform; }
 .account-drag-ghost strong, .account-drag-ghost small { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account-drag-ghost strong { font-size: 11px; }
 .account-drag-ghost small { color: var(--muted); font-size: 9px; }

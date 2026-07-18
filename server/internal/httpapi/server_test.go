@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -203,6 +204,65 @@ func TestAuthenticationIsolationImportExportAndGuestTransfer(t *testing.T) {
 	spa, _ := io.ReadAll(response.Body)
 	if response.StatusCode != http.StatusOK || !bytes.Contains(spa, []byte("Mail test")) {
 		t.Fatalf("SPA route failed: %d %s", response.StatusCode, spa)
+	}
+}
+
+func TestAuthenticatedAccountImportsAndBatchActionsHaveNoFixedLimit(t *testing.T) {
+	server, _ := newAPITestServer(t)
+	user := newCookieClient(t)
+	status, _ := apiJSON(t, user, http.MethodPost, server.URL+"/api/auth/login", map[string]any{
+		"email": "admin@example.com", "password": "AdminPassword!123",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("login status = %d", status)
+	}
+
+	lines := make([]string, 101)
+	for index := range lines {
+		lines[index] = fmt.Sprintf("bulk-%03d@example.invalid----password----client-id-%03d----refresh-token-%03d-long", index, index, index)
+	}
+	status, imported := apiJSON(t, user, http.MethodPost, server.URL+"/api/accounts/import", map[string]any{
+		"raw": strings.Join(lines, "\n"), "mode": "skip",
+	})
+	if status != http.StatusCreated || imported["inserted"] != float64(len(lines)) {
+		t.Fatalf("unlimited user import failed: %d %#v", status, imported)
+	}
+
+	status, listed := apiJSON(t, user, http.MethodGet, server.URL+"/api/accounts", nil)
+	if status != http.StatusOK {
+		t.Fatalf("account list status = %d: %#v", status, listed)
+	}
+	accounts, ok := listed["accounts"].([]any)
+	if !ok || len(accounts) != len(lines) {
+		t.Fatalf("account count mismatch: %#v", listed)
+	}
+	ids := make([]any, len(accounts))
+	for index, value := range accounts {
+		ids[index] = value.(map[string]any)["id"]
+	}
+
+	if status, _ := apiJSON(t, user, http.MethodPut, server.URL+"/api/accounts/order", map[string]any{"ids": ids}); status != http.StatusOK {
+		t.Fatalf("unlimited reorder status = %d", status)
+	}
+	if status, _ := apiJSON(t, user, http.MethodPost, server.URL+"/api/accounts/export", map[string]any{"ids": ids}); status != http.StatusOK {
+		t.Fatalf("unlimited export status = %d", status)
+	}
+	if status, _ := apiJSON(t, user, http.MethodPatch, server.URL+"/api/accounts/batch/group", map[string]any{"ids": ids, "group": "bulk"}); status != http.StatusOK {
+		t.Fatalf("unlimited group status = %d", status)
+	}
+	if status, result := apiJSON(t, user, http.MethodPost, server.URL+"/api/accounts/batch/delete", map[string]any{"ids": ids}); status != http.StatusOK || result["deleted"] != float64(len(ids)) {
+		t.Fatalf("unlimited batch delete failed: %d %#v", status, result)
+	}
+
+	guest := newCookieClient(t)
+	if status, _ := apiJSON(t, guest, http.MethodPost, server.URL+"/api/auth/guest", map[string]any{}); status != http.StatusCreated {
+		t.Fatalf("guest creation status = %d", status)
+	}
+	status, limited := apiJSON(t, guest, http.MethodPost, server.URL+"/api/accounts/import", map[string]any{
+		"raw": strings.Join(lines[:4], "\n"), "mode": "skip",
+	})
+	if status != http.StatusForbidden || limited["code"] != "ACCOUNT_LIMIT_REACHED" {
+		t.Fatalf("guest limit was not enforced: %d %#v", status, limited)
 	}
 }
 

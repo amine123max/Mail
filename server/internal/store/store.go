@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 
 	"github.com/amine123max/Mail/server/internal/model"
 	"github.com/amine123max/Mail/server/internal/secure"
@@ -368,22 +367,6 @@ func uniquePositiveIDs(ids []int64) ([]int64, bool) {
 		result = append(result, id)
 	}
 	return result, true
-}
-
-func placeholders(count int) string {
-	values := make([]string, count)
-	for index := range values {
-		values[index] = "?"
-	}
-	return strings.Join(values, ",")
-}
-
-func anySlice(values []int64) []any {
-	result := make([]any, len(values))
-	for index, value := range values {
-		result[index] = value
-	}
-	return result
 }
 
 func sortedKeys(values map[string][]int64) []string {

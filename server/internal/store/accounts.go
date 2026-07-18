@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"time"
 
 	"github.com/amine123max/Mail/server/internal/model"
@@ -80,6 +79,10 @@ func (s *Store) ImportAccounts(ctx context.Context, ownerKey string, accounts []
 	}
 	defer func() { _ = tx.Rollback() }()
 	result := ImportResult{}
+	var nextOrder int
+	if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(sort_order),-1)+1 FROM accounts WHERE owner_key=?", ownerKey).Scan(&nextOrder); err != nil {
+		return result, err
+	}
 	for _, account := range accounts {
 		emailHash := s.box.BlindIndex(account.Email)
 		var existingID int64
@@ -107,16 +110,13 @@ func (s *Store) ImportAccounts(ctx context.Context, ownerKey string, accounts []
 			result.Updated++
 			continue
 		}
-		var order int
-		if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(sort_order),-1)+1 FROM accounts WHERE owner_key=?", ownerKey).Scan(&order); err != nil {
-			return result, err
-		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO accounts
 			(owner_key,email_encrypted,email_hash,password_encrypted,client_id_encrypted,refresh_token_encrypted,remark,sort_order)
-			VALUES(?,?,?,?,?,?,?,?)`, ownerKey, email, emailHash, password, clientID, refreshToken, account.Remark, order)
+			VALUES(?,?,?,?,?,?,?,?)`, ownerKey, email, emailHash, password, clientID, refreshToken, account.Remark, nextOrder)
 		if err != nil {
 			return result, err
 		}
+		nextOrder++
 		result.Inserted++
 	}
 	return result, tx.Commit()
@@ -302,22 +302,26 @@ func (s *Store) ownedAccountIDs(ctx context.Context, ownerKey string, ids []int6
 	if !valid {
 		return nil, nil
 	}
-	arguments := []any{ownerKey}
-	arguments = append(arguments, anySlice(unique)...)
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf("SELECT id FROM accounts WHERE owner_key=? AND id IN (%s)", placeholders(len(unique))), arguments...)
+	rows, err := s.db.QueryContext(ctx, "SELECT id FROM accounts WHERE owner_key=?", ownerKey)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	count := 0
+	owned := make(map[int64]struct{}, len(unique))
 	for rows.Next() {
-		count++
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		owned[id] = struct{}{}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if count != len(unique) {
-		return nil, nil
+	for _, id := range unique {
+		if _, exists := owned[id]; !exists {
+			return nil, nil
+		}
 	}
 	return unique, nil
 }

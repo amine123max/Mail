@@ -58,6 +58,7 @@ import { AnnouncementDialog } from "./components/AnnouncementDialog";
 import { ComposePage, type ComposeAttachment } from "./components/ComposePage";
 import { ImportDialog } from "./components/ImportDialog";
 import { OAuthPage } from "./components/OAuthPage";
+import { SidebarAccounts } from "./components/SidebarAccounts";
 import { useI18n } from "./i18n";
 import {
   mailPath,
@@ -92,14 +93,6 @@ type MessageMoveConfirmation = {
   sourceRoute: FolderRoute;
   targetFolder: string;
   targetRoute: "archive" | "trash";
-};
-type AccountDragState = {
-  id: number;
-  pointerY: number;
-  offsetY: number;
-  left: number;
-  width: number;
-  height: number;
 };
 const brandLogoUrl = `${import.meta.env.BASE_URL}paper-plane-logo.png`;
 const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -218,23 +211,8 @@ function App() {
   const [messageMoveConfirmation, setMessageMoveConfirmation] = useState<MessageMoveConfirmation | null>(null);
   const [search, setSearch] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
-  const [accountSearchOpen, setAccountSearchOpen] = useState(false);
-  const [accountSearch, setAccountSearch] = useState("");
-  const [accountsCollapsed, setAccountsCollapsed] = useState(false);
-  const [accountMenuId, setAccountMenuId] = useState<number | null>(null);
   const [accountDeleteConfirmation, setAccountDeleteConfirmation] = useState<Account | null>(null);
   const [accountDeleteLoading, setAccountDeleteLoading] = useState(false);
-  const [accountDrag, setAccountDrag] = useState<AccountDragState | null>(null);
-  const accountDragTimerRef = useRef<number | null>(null);
-  const accountDragFrameRef = useRef<number | null>(null);
-  const accountDragPointerRef = useRef<{ x: number; y: number } | null>(null);
-  const accountDragGestureRef = useRef<{
-    id: number;
-    startY: number;
-    active: boolean;
-    order: number[];
-  } | null>(null);
-  const accountClickBlockUntilRef = useRef(0);
   const [mailPage, setMailPage] = useState(1);
   const [importOpen, setImportOpen] = useState(initialRoute.dialog === "import");
   const [oauthAccount, setOauthAccount] = useState<Account | null>(null);
@@ -250,18 +228,12 @@ function App() {
   });
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) || null;
-  const draggedAccount = accountDrag ? accounts.find((item) => item.id === accountDrag.id) || null : null;
   const visibleFolders = useMemo(() => folderDefinitions.map((definition) => {
     const actual = folders.find((folder) => folder.specialUse === definition.specialUse)
       || folders.find((folder) => folder.path.toLowerCase() === definition.fallback.toLowerCase());
     return { ...definition, path: actual?.path || definition.fallback, available: Boolean(actual) || definition.specialUse === "\\Inbox" };
   }), [folders]);
   const selectedFolder = visibleFolders.find((folder) => folder.route === selectedFolderRoute)?.path || "INBOX";
-  const filteredAccounts = useMemo(() => {
-    const query = accountSearch.trim().toLocaleLowerCase();
-    if (!query) return accounts;
-    return accounts.filter((account) => `${account.remark || ""}\n${account.email}`.toLocaleLowerCase().includes(query));
-  }, [accountSearch, accounts]);
 
   const closeMobileNav = useCallback(() => {
     if (mobileNavOpen) setMobileNavClosing(true);
@@ -410,18 +382,13 @@ function App() {
     }
   }, [notify]);
 
-  const clearAccountDragTimer = useCallback(() => {
-    if (accountDragTimerRef.current !== null) window.clearTimeout(accountDragTimerRef.current);
-    accountDragTimerRef.current = null;
-  }, []);
-
-  const clearAccountDragFrame = useCallback(() => {
-    if (accountDragFrameRef.current !== null) window.cancelAnimationFrame(accountDragFrameRef.current);
-    accountDragFrameRef.current = null;
-    accountDragPointerRef.current = null;
-  }, []);
-
   const persistAccountOrder = useCallback(async (ids: number[]) => {
+    setAccounts((current) => {
+      const accountsById = new Map(current.map((account) => [account.id, account]));
+      const ordered = ids.map((id) => accountsById.get(id)).filter((account): account is Account => Boolean(account));
+      const included = new Set(ids);
+      return [...ordered, ...current.filter((account) => !included.has(account.id))];
+    });
     try {
       const result = await api<{ accounts: Account[] }>("/api/accounts/order", {
         method: "PUT",
@@ -434,113 +401,21 @@ function App() {
     }
   }, [loadAccounts, notify]);
 
-  const startAccountDrag = (account: Account, event: React.PointerEvent<HTMLButtonElement>) => {
-    if (event.button !== 0) return;
-    const trigger = event.currentTarget;
-    const row = trigger.closest("[data-account-id]") as HTMLElement | null;
-    if (!row) return;
-    trigger.setPointerCapture(event.pointerId);
-    clearAccountDragTimer();
-    accountDragGestureRef.current = {
-      id: account.id,
-      startY: event.clientY,
-      active: false,
-      order: accounts.map((item) => item.id),
-    };
-    accountDragTimerRef.current = window.setTimeout(() => {
-      const gesture = accountDragGestureRef.current;
-      if (!gesture || gesture.id !== account.id) return;
-      const rect = row.getBoundingClientRect();
-      gesture.active = true;
-      accountClickBlockUntilRef.current = Date.now() + 1000;
-      setAccountMenuId(null);
-      setAccountDrag({
-        id: account.id,
-        pointerY: event.clientY,
-        offsetY: event.clientY - rect.top,
-        left: rect.left,
-        width: rect.width,
-        height: rect.height,
-      });
-    }, 360);
-  };
-
-  const moveAccountDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
-    const gesture = accountDragGestureRef.current;
-    if (!gesture) return;
-    const deltaY = event.clientY - gesture.startY;
-    if (!gesture.active) {
-      if (Math.abs(deltaY) > 9) {
-        clearAccountDragTimer();
-        accountDragGestureRef.current = null;
-      }
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    accountClickBlockUntilRef.current = Date.now() + 1000;
-    accountDragPointerRef.current = { x: event.clientX, y: event.clientY };
-    if (accountDragFrameRef.current !== null) return;
-    accountDragFrameRef.current = window.requestAnimationFrame(() => {
-      accountDragFrameRef.current = null;
-      const pointer = accountDragPointerRef.current;
-      const currentGesture = accountDragGestureRef.current;
-      if (!pointer || !currentGesture?.active) return;
-      setAccountDrag((current) => current ? { ...current, pointerY: pointer.y } : current);
-      const targetRow = document
-        .elementsFromPoint(pointer.x, pointer.y)
-        .map((element) => element.closest("[data-account-id]") as HTMLElement | null)
-        .find((element) => element && Number(element.dataset.accountId) !== currentGesture.id);
-      const targetId = Number(targetRow?.dataset.accountId);
-      if (!Number.isInteger(targetId) || !currentGesture.order.includes(targetId)) return;
-      setAccounts((current) => {
-        const from = current.findIndex((item) => item.id === currentGesture.id);
-        const to = current.findIndex((item) => item.id === targetId);
-        if (from < 0 || to < 0 || from === to) return current;
-        const next = [...current];
-        const [dragged] = next.splice(from, 1);
-        next.splice(to, 0, dragged);
-        currentGesture.order = next.map((item) => item.id);
-        return next;
-      });
-    });
-  };
-
-  const finishAccountDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
-    const gesture = accountDragGestureRef.current;
-    clearAccountDragTimer();
-    clearAccountDragFrame();
-    accountDragGestureRef.current = null;
-    if (!gesture?.active) return;
-    event.preventDefault();
-    event.stopPropagation();
-    accountClickBlockUntilRef.current = Date.now() + 1000;
-    setAccountDrag(null);
-    void persistAccountOrder(gesture.order);
-  };
-
-  const cancelAccountDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
-    const gesture = accountDragGestureRef.current;
-    clearAccountDragTimer();
-    clearAccountDragFrame();
-    accountDragGestureRef.current = null;
-    if (!gesture?.active) return;
-    event.preventDefault();
-    event.stopPropagation();
-    accountClickBlockUntilRef.current = Date.now() + 1000;
-    setAccountDrag(null);
-    void persistAccountOrder(gesture.order);
-  };
-
-  const exportSidebarAccount = async (account: Account) => {
-    setAccountMenuId(null);
+  const exportSidebarAccount = useCallback(async (account: Account) => {
     try {
       await downloadAccountsFile([account.id]);
       notify("账号已导出");
     } catch (error) {
       notify(error instanceof Error ? error.message : "账号导出失败", "error");
     }
-  };
+  }, [notify]);
+
+  const selectSidebarAccount = useCallback((accountId: number) => {
+    setSelectedAccountId(accountId);
+    navigateTo("inbox");
+  }, [navigateTo]);
+
+  const openSidebarImport = useCallback(() => navigateTo("import"), [navigateTo]);
 
   const confirmAccountDelete = async () => {
     const account = accountDeleteConfirmation;
@@ -549,7 +424,6 @@ function App() {
     try {
       await api(`/api/accounts/${account.id}`, { method: "DELETE" });
       setAccountDeleteConfirmation(null);
-      setAccountMenuId(null);
       notify("账号已删除");
       await loadAccounts();
     } catch (error) {
@@ -558,8 +432,6 @@ function App() {
       setAccountDeleteLoading(false);
     }
   };
-
-  useEffect(() => () => clearAccountDragTimer(), [clearAccountDragTimer]);
 
   useEffect(() => {
     // Keep the empty mailbox target stable until the landing handoff and the
@@ -801,132 +673,15 @@ function App() {
             </button>
           </div>
         </nav>
-        <div className="side-accounts">
-          <div className="side-section-title">
-            <span>{t("邮箱账号")}</span>
-            <div className="side-section-actions">
-              <button
-                onClick={() => {
-                  if (accountSearchOpen) {
-                    setAccountSearchOpen(false);
-                    setAccountSearch("");
-                  } else {
-                    setAccountsCollapsed(false);
-                    setAccountSearchOpen(true);
-                  }
-                }}
-                aria-label={t(accountSearchOpen ? "关闭搜索" : "搜索邮箱账号")}
-                title={t(accountSearchOpen ? "关闭搜索" : "搜索邮箱账号")}
-              >
-                {accountSearchOpen ? <X size={14} /> : <Search size={14} />}
-              </button>
-              <button onClick={() => navigateTo("import")} aria-label={t("导入账号")} title={t("导入账号")}><Plus size={14} /></button>
-              <button
-                onClick={() => {
-                  setAccountsCollapsed((collapsed) => {
-                    if (!collapsed) {
-                      setAccountSearchOpen(false);
-                      setAccountSearch("");
-                    }
-                    return !collapsed;
-                  });
-                }}
-                aria-expanded={!accountsCollapsed}
-                aria-label={t(accountsCollapsed ? "展开邮箱账号" : "收起邮箱账号")}
-                title={t(accountsCollapsed ? "展开邮箱账号" : "收起邮箱账号")}
-              >
-                {accountsCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-              </button>
-            </div>
-          </div>
-          {accountSearchOpen && !accountsCollapsed && (
-            <div className="account-search">
-              <Search size={14} />
-              <input
-                autoFocus
-                value={accountSearch}
-                onChange={(event) => setAccountSearch(event.target.value)}
-                placeholder={t("搜索邮箱账号")}
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  setAccountSearchOpen(false);
-                  setAccountSearch("");
-                }}
-                aria-label={t("关闭搜索")}
-                title={t("关闭搜索")}
-              >
-                <X size={13} />
-              </button>
-            </div>
-          )}
-          {!accountsCollapsed && filteredAccounts.map((account) => (
-            <div
-              key={account.id}
-              data-account-id={account.id}
-              className={`account-mini ${account.id === selectedAccountId ? "active" : ""} ${accountDrag?.id === account.id ? "drag-source" : ""}`}
-            >
-              <button
-                type="button"
-                className="account-mini-main"
-                onClick={(event) => {
-                  if (Date.now() < accountClickBlockUntilRef.current) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    return;
-                  }
-                  setSelectedAccountId(account.id);
-                  navigateTo("inbox");
-                }}
-              >
-                <span className="mini-avatar">{account.email.slice(0, 1).toUpperCase()}</span>
-                <span className="account-mini-copy"><strong>{account.remark || account.email.split("@")[0]}</strong><small>{account.email}</small></span>
-              </button>
-              <button
-                type="button"
-                className="account-more"
-                aria-label={t("账号操作")}
-                aria-expanded={accountMenuId === account.id}
-                onPointerDown={(event) => startAccountDrag(account, event)}
-                onPointerMove={moveAccountDrag}
-                onPointerUp={finishAccountDrag}
-                onPointerCancel={cancelAccountDrag}
-                onContextMenu={(event) => event.preventDefault()}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  if (Date.now() < accountClickBlockUntilRef.current) return;
-                  setAccountMenuId((current) => current === account.id ? null : account.id);
-                }}
-              ><EllipsisVertical size={16} /></button>
-              {accountMenuId === account.id && (
-                <>
-                  <button className="account-menu-dismiss" aria-label={t("关闭账号菜单")} onClick={() => setAccountMenuId(null)} />
-                  <div className="account-menu" role="menu">
-                    <button type="button" role="menuitem" className="account-menu-export" onClick={() => void exportSidebarAccount(account)}><Download size={16} /> {t("导出")}</button>
-                    <button type="button" role="menuitem" className="account-menu-delete" onClick={() => { setAccountMenuId(null); setAccountDeleteConfirmation(account); }}><Trash2 size={16} /> {t("删除")}</button>
-                  </div>
-                </>
-              )}
-            </div>
-          ))}
-          {!accountsCollapsed && Boolean(accountSearch.trim()) && !filteredAccounts.length && <div className="side-empty">{t("没有匹配的邮箱账号")}</div>}
-        </div>
-        {accountDrag && draggedAccount && (
-          <div
-            className="account-drag-ghost"
-            style={{
-              left: accountDrag.left,
-              top: accountDrag.pointerY - accountDrag.offsetY,
-              width: accountDrag.width,
-              height: accountDrag.height,
-            }}
-          >
-            <span className="mini-avatar">{draggedAccount.email.slice(0, 1).toUpperCase()}</span>
-            <span className="account-mini-copy"><strong>{draggedAccount.remark || draggedAccount.email.split("@")[0]}</strong><small>{draggedAccount.email}</small></span>
-            <EllipsisVertical size={16} />
-          </div>
-        )}
+        <SidebarAccounts
+          accounts={accounts}
+          selectedAccountId={selectedAccountId}
+          onSelect={selectSidebarAccount}
+          onImport={openSidebarImport}
+          onExport={exportSidebarAccount}
+          onDelete={setAccountDeleteConfirmation}
+          onOrderChange={persistAccountOrder}
+        />
       </div>
       <div className="sidebar-foot">
         {authState === "authenticated" && currentUser && <div className="sidebar-user"><span className="sidebar-user-avatar" style={{ background: avatarGradient(currentUser.username) }}>{currentUser.username.slice(0, 2).toUpperCase()}</span><span className="sidebar-user-copy"><strong>{currentUser.username}</strong><small>{currentUser.administrator ? t("管理员") : t("Mail 用户")}</small></span><ShieldCheck size={17} /></div>}
