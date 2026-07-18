@@ -145,3 +145,44 @@ func TestResetPasswordWithEmailVerificationCode(t *testing.T) {
 		t.Fatal("password reset did not revoke the desktop session")
 	}
 }
+
+func TestDisabledAccountRevokesDesktopSessionAndCanRecover(t *testing.T) {
+	service, storage := openAuthTestService(t, nil)
+	const email = "disabled-user@example.com"
+	const password = "DisabledUser!123"
+	hash, err := hashPassword(password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	user, err := storage.CreateUser(context.Background(), "disabled-user", hash, email, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desktopSession, err := service.CreateDesktopSession(context.Background(), user, "disabled-device", "Disabled account test", "1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, valid := service.readDesktopAccessToken(desktopSession.AccessToken)
+	if !valid {
+		t.Fatal("desktop access token was invalid before account disable")
+	}
+	if err := service.SetUserDisabled(context.Background(), user.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if authenticated, err := service.Authenticate(context.Background(), email, password); err != nil || authenticated != nil {
+		t.Fatalf("disabled account authenticated: user=%v err=%v", authenticated, err)
+	}
+	active, err := storage.DesktopSessionActive(context.Background(), claims.SessionID, claims.UserID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active {
+		t.Fatal("account disable did not revoke the desktop session")
+	}
+	if err := service.SetUserDisabled(context.Background(), user.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if authenticated, err := service.Authenticate(context.Background(), email, password); err != nil || authenticated == nil {
+		t.Fatalf("re-enabled account could not authenticate: user=%v err=%v", authenticated, err)
+	}
+}

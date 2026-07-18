@@ -57,6 +57,7 @@ func (s *Store) initialize(ctx context.Context) error {
 			email_hash TEXT,
 			password_hash TEXT NOT NULL,
 			is_admin INTEGER NOT NULL DEFAULT 0,
+			disabled_at TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -155,7 +156,7 @@ func (s *Store) migrateUsers(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	statements := make([]string, 0, 3)
+	statements := make([]string, 0, 4)
 	if !columns["email_encrypted"] {
 		statements = append(statements, "ALTER TABLE users ADD COLUMN email_encrypted TEXT")
 	}
@@ -164,6 +165,9 @@ func (s *Store) migrateUsers(ctx context.Context) error {
 	}
 	if !columns["is_admin"] {
 		statements = append(statements, "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+	}
+	if !columns["disabled_at"] {
+		statements = append(statements, "ALTER TABLE users ADD COLUMN disabled_at TEXT")
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {

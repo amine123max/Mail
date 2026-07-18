@@ -640,7 +640,7 @@ button { color: inherit; }
 .admin-action-list small { color: var(--muted); font-size: 9px; }
 .admin-action-list > button > svg { color: var(--muted); }
 .admin-users-toolbar .accounts-search { width: min(420px, 100%); }
-.admin-users-head, .admin-user-row { min-width: 760px; display: grid; grid-template-columns: 1.2fr 1.5fr 100px 90px 150px; align-items: center; gap: 14px; padding: 0 18px; }
+.admin-users-head, .admin-user-row { min-width: 920px; display: grid; grid-template-columns: 1.15fr 1.4fr 90px 82px 70px 130px 86px; align-items: center; gap: 14px; padding: 0 18px; }
 .admin-users-head { min-height: 44px; color: var(--muted); background: var(--surface-soft); font-size: 9px; font-weight: 650; }
 .admin-user-row { min-height: 68px; border-top: 1px solid var(--border); font-size: 10px; }
 .admin-user-row > div { min-width: 0; display: flex; align-items: center; gap: 10px; }
@@ -648,6 +648,13 @@ button { color: inherit; }
 .admin-user-row > span, .admin-user-row time { color: var(--muted); }
 .admin-role { width: max-content; padding: 5px 8px; border-radius: 7px; color: var(--muted); background: var(--surface-soft); }
 .admin-role.admin { color: #2563eb; background: rgba(59,130,246,.09); }
+.admin-status { width: max-content; padding: 4px 7px; border-radius: 999px; color: #168a55; background: rgba(48,164,108,.09); font-size: 9px; font-weight: 700; }
+.admin-status.disabled { color: var(--danger); background: rgba(220,38,38,.08); }
+.admin-user-status-button { min-width: 64px; height: 30px; padding: 0 10px; border: 1px solid rgba(220,38,38,.18); border-radius: 7px; color: var(--danger); background: transparent; font-size: 9px; font-weight: 700; }
+.admin-user-status-button:hover:not(:disabled) { background: rgba(220,38,38,.07); }
+.admin-user-status-button.enable { border-color: rgba(48,164,108,.22); color: #168a55; }
+.admin-user-status-button.enable:hover:not(:disabled) { background: rgba(48,164,108,.08); }
+.admin-users-notice { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border: 1px solid rgba(220,38,38,.16); border-radius: 8px; color: var(--danger); background: rgba(220,38,38,.05); font-size: 9px; }
 .settings-professional-row { min-height: 112px; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: start; gap: 14px; padding: 20px; border-top: 1px solid var(--border); }
 .settings-professional-row:first-child { border-top: 0; }
 .settings-professional-row > div { display: grid; gap: 6px; }

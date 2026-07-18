@@ -91,7 +91,7 @@ func (s *Service) Authenticate(ctx context.Context, email, password string) (*mo
 		storedHash = user.PasswordHash
 	}
 	valid, err := verifyPassword(password, storedHash)
-	if err != nil || user == nil || !valid {
+	if err != nil || user == nil || user.DisabledAt != nil || !valid {
 		return nil, err
 	}
 	return user, nil
@@ -249,6 +249,9 @@ func (s *Service) RequestRegistrationCode(ctx context.Context, email, purpose, l
 }
 
 func (s *Service) CreateUserSession(ctx context.Context, response http.ResponseWriter, request *http.Request, user *model.User) error {
+	if user == nil || user.DisabledAt != nil {
+		return authError("账号已停用", "ACCOUNT_DISABLED", http.StatusForbidden)
+	}
 	id, err := randomToken(24)
 	if err != nil {
 		return err
@@ -261,6 +264,9 @@ func (s *Service) CreateUserSession(ctx context.Context, response http.ResponseW
 }
 
 func (s *Service) CreateDesktopSession(ctx context.Context, user *model.User, deviceID, deviceName, clientVersion string) (desktopcontract.DesktopSessionResponse, error) {
+	if user == nil || user.DisabledAt != nil {
+		return desktopcontract.DesktopSessionResponse{}, authError("账号已停用", "ACCOUNT_DISABLED", http.StatusForbidden)
+	}
 	now := time.Now().UTC()
 	sessionID, err := randomToken(24)
 	if err != nil {
@@ -352,6 +358,9 @@ func (s *Service) DesktopIdentity(ctx context.Context, request *http.Request) (*
 	if user == nil {
 		return nil, "", authError("设备登录状态无效", "DESKTOP_ACCESS_INVALID", http.StatusUnauthorized)
 	}
+	if user.DisabledAt != nil {
+		return nil, "", authError("账号已停用", "ACCOUNT_DISABLED", http.StatusForbidden)
+	}
 	identity := &model.Identity{Kind: "user", OwnerKey: "user:" + strconv.FormatInt(user.ID, 10), UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin}
 	return identity, claims.SessionID, nil
 }
@@ -366,6 +375,10 @@ func (s *Service) RevokeDesktopDevice(ctx context.Context, userID int64, deviceI
 
 func (s *Service) RevokeAllDesktopSessions(ctx context.Context, userID int64) error {
 	return s.store.RevokeAllDesktopSessions(ctx, userID, "USER_REVOKED_ALL_DEVICES")
+}
+
+func (s *Service) SetUserDisabled(ctx context.Context, userID int64, disabled bool) error {
+	return s.store.SetUserDisabled(ctx, userID, disabled)
 }
 
 func (s *Service) ListDesktopDevices(ctx context.Context, userID int64, currentSessionID string) ([]model.DesktopDeviceSummary, error) {
@@ -465,7 +478,7 @@ func (s *Service) Identity(ctx context.Context, request *http.Request) (*model.I
 			if err != nil {
 				return nil, err
 			}
-			if user != nil {
+			if user != nil && user.DisabledAt == nil {
 				return &model.Identity{Kind: "user", OwnerKey: "user:" + strconv.FormatInt(user.ID, 10), UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin}, nil
 			}
 		}

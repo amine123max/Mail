@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"testing"
 )
 
@@ -163,5 +164,56 @@ func TestDesktopDeviceRevocationIsRateLimited(t *testing.T) {
 				t.Fatalf("device revoke rate limit contract invalid: %d %#v headers=%v", status, body, headers)
 			}
 		}
+	}
+}
+
+func TestAdministratorCanDisableUserAndRevokeDesktopAccess(t *testing.T) {
+	server, storage := newAPITestServer(t)
+	const userEmail = "managed-user@example.com"
+	const userPassword = "NodeCompatible!123"
+	const nodeCompatibleHash = "scrypt:AAECAwQFBgcICQoLDA0ODw:sW1COcKH7Z2BDFE6mMHuCBgIPw6OwcK45RqKR1FrA7g"
+	managed, err := storage.CreateUser(t.Context(), "managed-user", nodeCompatibleHash, userEmail, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	userClient := newCookieClient(t)
+	status, _, desktop := desktopSessionJSON(t, userClient, http.MethodPost, server.URL+"/api/v1/desktop/sessions", "", map[string]any{
+		"email": userEmail, "password": userPassword, "deviceId": "managed-user-device", "deviceName": "Managed Windows device",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("managed user desktop login failed: %d %#v", status, desktop)
+	}
+	accessToken := desktop["accessToken"].(string)
+
+	administrator := newCookieClient(t)
+	status, login := apiJSON(t, administrator, http.MethodPost, server.URL+"/api/auth/login", map[string]any{
+		"email": "admin@example.com", "password": "AdminPassword!123",
+	})
+	if status != http.StatusOK || login["administrator"] != true {
+		t.Fatalf("administrator login failed: %d %#v", status, login)
+	}
+	status, disabled := apiJSON(t, administrator, http.MethodPatch, server.URL+"/api/admin/users/"+strconv.FormatInt(managed.ID, 10)+"/status", map[string]any{"disabled": true})
+	if status != http.StatusOK || disabled["disabled"] != true {
+		t.Fatalf("account disable failed: %d %#v", status, disabled)
+	}
+	status, _, revoked := desktopSessionJSON(t, userClient, http.MethodGet, server.URL+"/api/accounts", accessToken, nil)
+	if status != http.StatusUnauthorized || revoked["code"] != "DESKTOP_SESSION_REVOKED" {
+		t.Fatalf("disabled account retained desktop access: %d %#v", status, revoked)
+	}
+	status, rejected := apiJSON(t, newCookieClient(t), http.MethodPost, server.URL+"/api/auth/login", map[string]any{
+		"email": userEmail, "password": userPassword,
+	})
+	if status != http.StatusUnauthorized || rejected["code"] != "LOGIN_FAILED" {
+		t.Fatalf("disabled account login contract invalid: %d %#v", status, rejected)
+	}
+	status, enabled := apiJSON(t, administrator, http.MethodPatch, server.URL+"/api/admin/users/"+strconv.FormatInt(managed.ID, 10)+"/status", map[string]any{"disabled": false})
+	if status != http.StatusOK || enabled["disabled"] != false {
+		t.Fatalf("account re-enable failed: %d %#v", status, enabled)
+	}
+	status, restored := apiJSON(t, newCookieClient(t), http.MethodPost, server.URL+"/api/auth/login", map[string]any{
+		"email": userEmail, "password": userPassword,
+	})
+	if status != http.StatusOK || restored["authenticated"] != true {
+		t.Fatalf("re-enabled account could not log in: %d %#v", status, restored)
 	}
 }

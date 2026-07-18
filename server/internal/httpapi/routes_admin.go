@@ -1,9 +1,13 @@
 package httpapi
 
 import (
+	"database/sql"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/amine123max/Mail/server/internal/store"
 )
 
 func (s *Server) listAnnouncements(response http.ResponseWriter, request *http.Request) error {
@@ -78,5 +82,42 @@ func (s *Server) adminUsers(response http.ResponseWriter, request *http.Request)
 	}
 	response.Header().Set("Cache-Control", "no-store, private")
 	writeJSON(response, http.StatusOK, map[string]any{"users": users})
+	return nil
+}
+
+func (s *Server) adminUserStatus(response http.ResponseWriter, request *http.Request) error {
+	userID, err := parseID(request.PathValue("id"))
+	if err != nil {
+		return validation("用户 ID 格式不正确")
+	}
+	var body struct {
+		Disabled *bool `json:"disabled"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		return err
+	}
+	if body.Disabled == nil {
+		return validation("disabled 必须为布尔值")
+	}
+	identity := identityFrom(request)
+	if *body.Disabled && identity.UserID == userID {
+		return apiFailure(http.StatusConflict, "CANNOT_DISABLE_SELF", "不能停用当前管理员账号", nil)
+	}
+	if err := s.auth.SetUserDisabled(request.Context(), userID, *body.Disabled); err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return apiFailure(http.StatusNotFound, "USER_NOT_FOUND", "用户不存在", nil)
+		case errors.Is(err, store.ErrAdministratorCannotBeDisabled):
+			return apiFailure(http.StatusConflict, "ADMIN_DISABLE_FORBIDDEN", "管理员账号不能被停用", nil)
+		default:
+			return err
+		}
+	}
+	result := "enabled"
+	if *body.Disabled {
+		result = "disabled"
+	}
+	s.auditSecurity(request, "admin_user_status", result, "USER_STATUS_UPDATED", identity.UserID, strconv.FormatInt(userID, 10))
+	writeJSON(response, http.StatusOK, map[string]any{"id": userID, "disabled": *body.Disabled})
 	return nil
 }

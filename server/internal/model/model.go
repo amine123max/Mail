@@ -53,16 +53,19 @@ type User struct {
 	EmailHash      *string
 	PasswordHash   string
 	IsAdmin        bool
+	DisabledAt     *string
 	CreatedAt      string
 }
 
 type AdminUserSummary struct {
-	ID            int64  `json:"id"`
-	Username      string `json:"username"`
-	Email         string `json:"email"`
-	Administrator bool   `json:"administrator"`
-	AccountCount  int    `json:"accountCount"`
-	CreatedAt     string `json:"createdAt"`
+	ID            int64   `json:"id"`
+	Username      string  `json:"username"`
+	Email         string  `json:"email"`
+	Administrator bool    `json:"administrator"`
+	Disabled      bool    `json:"disabled"`
+	DisabledAt    *string `json:"disabledAt"`
+	AccountCount  int     `json:"accountCount"`
+	CreatedAt     string  `json:"createdAt"`
 }
 
 type Announcement struct {

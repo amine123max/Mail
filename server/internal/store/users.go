@@ -3,11 +3,14 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/amine123max/Mail/server/internal/model"
 )
+
+var ErrAdministratorCannotBeDisabled = errors.New("administrator accounts cannot be disabled")
 
 type VerificationResult string
 
@@ -20,15 +23,15 @@ const (
 )
 
 func (s *Store) FindUserByUsername(ctx context.Context, username string) (*model.User, error) {
-	return scanUserRow(s.db.QueryRowContext(ctx, "SELECT id,username,email_encrypted,email_hash,password_hash,is_admin,created_at FROM users WHERE username=?", username))
+	return scanUserRow(s.db.QueryRowContext(ctx, "SELECT id,username,email_encrypted,email_hash,password_hash,is_admin,disabled_at,created_at FROM users WHERE username=?", username))
 }
 
 func (s *Store) FindUserByID(ctx context.Context, id int64) (*model.User, error) {
-	return scanUserRow(s.db.QueryRowContext(ctx, "SELECT id,username,email_encrypted,email_hash,password_hash,is_admin,created_at FROM users WHERE id=?", id))
+	return scanUserRow(s.db.QueryRowContext(ctx, "SELECT id,username,email_encrypted,email_hash,password_hash,is_admin,disabled_at,created_at FROM users WHERE id=?", id))
 }
 
 func (s *Store) FindUserByEmail(ctx context.Context, email string) (*model.User, error) {
-	return scanUserRow(s.db.QueryRowContext(ctx, "SELECT id,username,email_encrypted,email_hash,password_hash,is_admin,created_at FROM users WHERE email_hash=?", s.box.BlindIndex(email)))
+	return scanUserRow(s.db.QueryRowContext(ctx, "SELECT id,username,email_encrypted,email_hash,password_hash,is_admin,disabled_at,created_at FROM users WHERE email_hash=?", s.box.BlindIndex(email)))
 }
 
 func (s *Store) CreateUser(ctx context.Context, username, passwordHash, email string, administrator bool) (*model.User, error) {
@@ -58,6 +61,38 @@ func (s *Store) UpdateUserPassword(ctx context.Context, userID int64, passwordHa
 	if _, err := tx.ExecContext(ctx, `UPDATE desktop_sessions SET revoked_at=?,revoke_reason='PASSWORD_RESET'
 		WHERE user_id=? AND revoked_at IS NULL`, nowISO(), userID); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) SetUserDisabled(ctx context.Context, userID int64, disabled bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var administrator int
+	if err := tx.QueryRowContext(ctx, "SELECT is_admin FROM users WHERE id=?", userID).Scan(&administrator); err != nil {
+		return err
+	}
+	if disabled && administrator != 0 {
+		return ErrAdministratorCannotBeDisabled
+	}
+	var disabledAt any
+	if disabled {
+		disabledAt = nowISO()
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE users SET disabled_at=? WHERE id=?", disabledAt, userID); err != nil {
+		return err
+	}
+	if disabled {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM user_sessions WHERE user_id=?", userID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE desktop_sessions SET revoked_at=?,revoke_reason='ACCOUNT_DISABLED'
+			WHERE user_id=? AND revoked_at IS NULL`, nowISO(), userID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -325,16 +360,16 @@ func (s *Store) createUserWith(ctx context.Context, executor interface {
 		return nil, err
 	}
 	if tx, ok := executor.(*sql.Tx); ok {
-		return scanUserRow(tx.QueryRowContext(ctx, "SELECT id,username,email_encrypted,email_hash,password_hash,is_admin,created_at FROM users WHERE id=?", id))
+		return scanUserRow(tx.QueryRowContext(ctx, "SELECT id,username,email_encrypted,email_hash,password_hash,is_admin,disabled_at,created_at FROM users WHERE id=?", id))
 	}
 	return s.FindUserByID(ctx, id)
 }
 
 func scanUserRow(scanner interface{ Scan(...any) error }) (*model.User, error) {
 	var user model.User
-	var emailEncrypted, emailHash sql.NullString
+	var emailEncrypted, emailHash, disabledAt sql.NullString
 	var isAdmin int
-	err := scanner.Scan(&user.ID, &user.Username, &emailEncrypted, &emailHash, &user.PasswordHash, &isAdmin, &user.CreatedAt)
+	err := scanner.Scan(&user.ID, &user.Username, &emailEncrypted, &emailHash, &user.PasswordHash, &isAdmin, &disabledAt, &user.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -348,6 +383,9 @@ func scanUserRow(scanner interface{ Scan(...any) error }) (*model.User, error) {
 		user.EmailHash = &emailHash.String
 	}
 	user.IsAdmin = isAdmin != 0
+	if disabledAt.Valid {
+		user.DisabledAt = &disabledAt.String
+	}
 	return &user, nil
 }
 

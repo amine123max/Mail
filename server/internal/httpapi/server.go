@@ -133,6 +133,7 @@ func (s *Server) routes() {
 	s.handleIdentity("GET /api/admin/stats", true, true, s.adminStats)
 	s.handleIdentity("GET /api/admin/activity", true, true, s.adminActivity)
 	s.handleIdentity("GET /api/admin/users", true, true, s.adminUsers)
+	s.handleIdentity("PATCH /api/admin/users/{id}/status", true, true, s.withRateLimit(s.authLimit, s.adminUserStatus))
 
 	s.handleIdentity("GET /api/accounts", false, false, s.listAccounts)
 	s.handleIdentity("POST /api/accounts/import", false, false, s.importAccounts)

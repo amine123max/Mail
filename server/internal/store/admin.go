@@ -144,7 +144,7 @@ func (s *Store) GetAdminActivity(ctx context.Context, days int) ([]AdminActivity
 }
 
 func (s *Store) ListUsersForAdmin(ctx context.Context) ([]model.AdminUserSummary, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT users.id,users.username,users.email_encrypted,users.is_admin,
+	rows, err := s.db.QueryContext(ctx, `SELECT users.id,users.username,users.email_encrypted,users.is_admin,users.disabled_at,
 		users.created_at,COUNT(accounts.id) FROM users LEFT JOIN accounts ON accounts.owner_key='user:'||users.id
 		GROUP BY users.id ORDER BY users.created_at DESC,users.id DESC`)
 	if err != nil {
@@ -154,12 +154,16 @@ func (s *Store) ListUsersForAdmin(ctx context.Context) ([]model.AdminUserSummary
 	result := make([]model.AdminUserSummary, 0)
 	for rows.Next() {
 		var item model.AdminUserSummary
-		var encryptedEmail sql.NullString
+		var encryptedEmail, disabledAt sql.NullString
 		var administrator int
-		if err := rows.Scan(&item.ID, &item.Username, &encryptedEmail, &administrator, &item.CreatedAt, &item.AccountCount); err != nil {
+		if err := rows.Scan(&item.ID, &item.Username, &encryptedEmail, &administrator, &disabledAt, &item.CreatedAt, &item.AccountCount); err != nil {
 			return nil, err
 		}
 		item.Administrator = administrator != 0
+		item.Disabled = disabledAt.Valid
+		if disabledAt.Valid {
+			item.DisabledAt = &disabledAt.String
+		}
 		if encryptedEmail.Valid {
 			email, err := s.box.Decrypt(encryptedEmail.String)
 			if err != nil {

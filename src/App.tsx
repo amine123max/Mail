@@ -74,7 +74,7 @@ import {
 type Toast = { id: number; message: string; type: "success" | "error" };
 type CurrentUser = { username: string; administrator: boolean };
 type AdminStats = { users: number; mailboxAccounts: number; activeGuests: number; announcements: number };
-type AdminUserSummary = { id: number; username: string; email: string; administrator: boolean; accountCount: number; createdAt: string };
+type AdminUserSummary = { id: number; username: string; email: string; administrator: boolean; disabled: boolean; disabledAt: string | null; accountCount: number; createdAt: string };
 type AdminActivityPoint = { date: string; users: number; accounts: number; guests: number; announcements: number };
 type PendingSend = {
   id: string;
@@ -1768,6 +1768,8 @@ function AdminUsersPage() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [updatingId, setUpdatingId] = useState<number | null>(null);
   useEffect(() => {
     api<{ users: AdminUserSummary[] }>("/api/admin/users").then((result) => setUsers(result.users)).catch((reason) => setError(reason instanceof Error ? reason.message : t("无法读取用户列表"))).finally(() => setLoading(false));
   }, [t]);
@@ -1775,15 +1777,28 @@ function AdminUsersPage() {
     const normalized = query.trim().toLocaleLowerCase();
     return normalized ? users.filter((user) => `${user.username}\n${user.email}`.toLocaleLowerCase().includes(normalized)) : users;
   }, [query, users]);
+  const updateUserStatus = async (user: AdminUserSummary) => {
+    setUpdatingId(user.id);
+    setActionError("");
+    try {
+      await api(`/api/admin/users/${user.id}/status`, { method: "PATCH", body: JSON.stringify({ disabled: !user.disabled }) });
+      setUsers((current) => current.map((item) => item.id === user.id ? { ...item, disabled: !item.disabled, disabledAt: item.disabled ? null : new Date().toISOString() } : item));
+    } catch (reason) {
+      setActionError(reason instanceof Error ? reason.message : t("用户状态更新失败"));
+    } finally {
+      setUpdatingId(null);
+    }
+  };
   return (
     <section className="admin-professional-page">
       <header className="accounts-professional-head"><div><h1>{t("用户管理")}</h1><p>{t("仅显示安全的用户摘要，不包含密码或邮箱令牌")}</p></div><div className="accounts-count"><strong>{users.length}</strong><span>{t("注册用户")}</span></div></header>
       <div className="accounts-toolbar admin-users-toolbar"><label className="accounts-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("搜索用户名或登录邮箱…")} /></label></div>
+      {actionError && <div className="admin-users-notice"><CircleAlert size={15} /><span>{actionError}</span></div>}
       <div className="admin-users-table">
-        <div className="admin-users-head"><span>{t("用户")}</span><span>{t("登录邮箱")}</span><span>{t("角色")}</span><span>{t("邮箱数量")}</span><span>{t("注册时间")}</span></div>
+        <div className="admin-users-head"><span>{t("用户")}</span><span>{t("登录邮箱")}</span><span>{t("角色")}</span><span>{t("状态")}</span><span>{t("邮箱数量")}</span><span>{t("注册时间")}</span><span>{t("操作")}</span></div>
         {loading && <div className="empty-table"><RefreshCw className="spin" size={21} /><span>{t("正在加载用户…")}</span></div>}
         {!loading && error && <div className="empty-table"><CircleAlert size={22} /><span>{error}</span></div>}
-        {!loading && !error && filtered.map((user) => <div className="admin-user-row" key={user.id}><div><span className="sidebar-user-avatar" style={{ background: avatarGradient(user.username) }}>{user.username.slice(0, 2).toUpperCase()}</span><strong>{user.username}</strong></div><span>{user.email || "—"}</span><span className={user.administrator ? "admin-role admin" : "admin-role"}>{t(user.administrator ? "管理员" : "普通用户")}</span><strong>{user.accountCount}</strong><time>{formatDate(user.createdAt, true, language === "en" ? "en-US" : "zh-CN")}</time></div>)}
+        {!loading && !error && filtered.map((user) => <div className="admin-user-row" key={user.id}><div><span className="sidebar-user-avatar" style={{ background: avatarGradient(user.username) }}>{user.username.slice(0, 2).toUpperCase()}</span><strong>{user.username}</strong></div><span>{user.email || "—"}</span><span className={user.administrator ? "admin-role admin" : "admin-role"}>{t(user.administrator ? "管理员" : "普通用户")}</span><span className={user.disabled ? "admin-status disabled" : "admin-status"}>{t(user.disabled ? "已停用" : "正常")}</span><strong>{user.accountCount}</strong><time>{formatDate(user.createdAt, true, language === "en" ? "en-US" : "zh-CN")}</time>{user.administrator ? <span>—</span> : <button className={user.disabled ? "admin-user-status-button enable" : "admin-user-status-button"} disabled={updatingId === user.id} onClick={() => void updateUserStatus(user)}>{updatingId === user.id ? t("处理中…") : t(user.disabled ? "恢复" : "停用")}</button>}</div>)}
         {!loading && !error && !filtered.length && <div className="empty-table"><Users size={22} /><span>{t("没有匹配的用户")}</span></div>}
       </div>
     </section>
