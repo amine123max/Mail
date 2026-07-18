@@ -5,23 +5,24 @@ Thank you for improving Mail.
 ## Development setup
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
 Before submitting a pull request, run:
 
 ```bash
-npm run typecheck
 npm test
+npm run vet
+npm run typecheck
 npm run build
-npm audit
+npm run audit
 ```
 
 ## Pull requests
 
 - Keep changes focused and explain the user-facing outcome.
-- Add or update tests for authentication, tenant isolation, imports, and data migrations.
+- Add or update Go tests for authentication, tenant isolation, imports, data migrations, mail protocols, and hostile MIME/HTML input.
 - Never commit `.env`, SQLite databases, encryption keys, mailbox passwords, OAuth tokens, or real email content.
 - Preserve Chinese and English translations for every new visible interface string.
 - Treat all email HTML and remote content as untrusted.

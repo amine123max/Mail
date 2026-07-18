@@ -15,7 +15,7 @@ Do not open a public issue containing credentials, tokens, private messages, exp
 - Set `MAIL_TRUST_PROXY=1` only when direct access to the application port is blocked.
 - Back up the database and encryption key separately and protect both at rest.
 - Restrict filesystem access to the application user.
-- Keep Node.js and npm dependencies current and review `npm audit` results.
+- Keep Go, the Go module graph, Node.js build tooling, and npm dependencies current; review `govulncheck` and `npm audit` results.
 
 ## Credential exposure
 
@@ -32,7 +32,9 @@ If a mailbox password or refresh token is exposed:
 - Signed HttpOnly cookies backed by revocable server-side sessions.
 - Receive-only isolated guest sessions.
 - AES-256-GCM encrypted credential fields.
-- Sanitized email HTML, iframe sandboxing, and remote-image blocking.
+- Server-side email HTML sanitization, CSS network-load removal, and remote-image proxying with private-network rejection and DNS pinning.
+- TLS-only IMAP/SMTP connections, XOAUTH2 authentication, and Microsoft Graph fallback.
 - No-store API responses and restrictive browser security headers.
+- Per-user/guest external-operation limits and trusted-proxy-aware authentication rate limits.
 - Production startup checks for strong secrets.
 - One-time administrator bootstrap and email-verified registration with five-minute codes.

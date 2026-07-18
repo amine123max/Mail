@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.5"
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Test and vet Go backend
+        run: |
+          go test ./...
+          go vet ./...
+
+      - name: Verify frontend and migration reference
+        run: |
+          npm run typecheck
+          npm run test:legacy
+          VITE_BASE_PATH=/mail/ npm run build:web
+
+      - name: Audit production npm dependencies
+        run: npm run audit
+
+      - name: Build production container
+        run: docker build --build-arg VITE_BASE_PATH=/mail/ -t mail:test .

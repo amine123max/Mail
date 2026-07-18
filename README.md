@@ -19,19 +19,21 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/release-v1.0.0-111111?style=flat-square" alt="Release v1.0.0" />
-  <img src="https://img.shields.io/badge/Node.js-24+-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js 24+" />
+  <a href="https://github.com/amine123max/Mail/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/amine123max/Mail/ci.yml?branch=main&style=flat-square&label=CI" alt="CI status" /></a>
+  <img src="https://img.shields.io/badge/Go-1.26.5+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.26.5+" />
   <img src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=111827" alt="React 18" />
   <img src="https://img.shields.io/badge/SQLite-local-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
   <img src="https://img.shields.io/badge/Microsoft-OAuth2-5E5E5E?style=flat-square&logo=microsoft&logoColor=white" alt="Microsoft OAuth2" />
   <img src="https://img.shields.io/badge/license-MIT-166534?style=flat-square" alt="MIT License" />
 </p>
 
-![Mail desktop workspace](docs/images/dashboard.png)
+![Mail desktop compose workspace](docs/images/compose.png)
 
 Mail brings receiving, reading, organizing, and sending email into one responsive web application. It combines Microsoft OAuth2, IMAP, SMTP, Microsoft Graph, and an owner-scoped SQLite data layer without sending mailbox credentials to a third-party service.
 
 The interface is designed for desktop and mobile use, supports English and Chinese, includes light and dark themes, and provides a dedicated administration workspace for users, activity, and announcements.
+
+The production runtime is a single Go binary that serves both the API and the compiled React application. Node.js is used only for frontend builds and the retained migration-reference test suite; Express is not part of the deployed service.
 
 ## Why Mail
 
@@ -39,7 +41,7 @@ The interface is designed for desktop and mobile use, supports English and Chine
 | --- | --- | --- |
 | ✉️ | Unified mailbox | Inbox, sent mail, drafts, archive, trash, search, and message reading across multiple accounts. |
 | 🔐 | Private by design | Passwords, Client IDs, and refresh tokens are encrypted with AES-256-GCM before SQLite persistence. |
-| 🚀 | OAuth2 transport | IMAP XOAUTH2 receiving, SMTP OAuth2 sending, and Microsoft Graph `Mail.Send` fallback. |
+| 🚀 | Hybrid OAuth2 transport | IMAP XOAUTH2 and Microsoft Graph receiving, plus SMTP OAuth2 and Graph sending with automatic fallback. |
 | 👥 | Multi-user isolation | Every query is scoped to an authenticated user or an isolated guest session. |
 | 🧭 | Complete account workflow | Batch import/export, grouping, ordering, testing, deletion, and Device Code authorization. |
 | 📱 | Responsive interface | Purpose-built desktop and mobile layouts, resizable message panes, themes, and bilingual UI. |
@@ -89,7 +91,7 @@ All screenshots use fictional demonstration data. No production mailbox, token, 
 
 ```mermaid
 flowchart LR
-  Browser[React web app] -->|Signed HttpOnly cookie| API[Express API]
+  Browser[React web app] -->|Signed HttpOnly cookie| API[Go HTTP API]
   API --> Identity{Owner scope}
   Identity --> User[Authenticated user]
   Identity --> Guest[Isolated guest]
@@ -98,17 +100,17 @@ flowchart LR
   API --> OAuth[Microsoft OAuth2]
   OAuth --> IMAP[IMAP receive]
   OAuth --> SMTP[SMTP send]
-  OAuth --> Graph[Graph send fallback]
+  OAuth --> Graph[Graph receive and send]
 ```
 
 ### Mail transport
 
 | Operation | Primary path | Fallback / behavior |
 | --- | --- | --- |
-| Receive | IMAP over TLS with XOAUTH2 | Outlook IMAP resource scope |
+| Receive | IMAP over TLS with XOAUTH2 | Microsoft Graph `Mail.ReadWrite` when IMAP is unavailable |
 | Send | SMTP over STARTTLS with OAuth2 | Microsoft Graph `Mail.Send` when SMTP AUTH is unavailable |
 | Refresh | Microsoft refresh token | Rotated tokens are encrypted and persisted immediately |
-| Render HTML | Sanitized sandbox iframe | Scripts, unsafe URLs, and remote tracking resources are blocked |
+| Render HTML | Server-side sanitized content | Scripts, unsafe URLs, CSS network loads, private-network requests, and remote tracking resources are blocked |
 
 ### Privacy boundaries
 
@@ -117,20 +119,20 @@ flowchart LR
 - Cookies contain only a signed session identifier—never a mailbox password, Client ID, or refresh token.
 - Credentials are encrypted before being written to SQLite.
 - Guest accounts can be migrated into the user's private namespace after sign-in or registration.
-- Original email HTML is sanitized and displayed in a sandboxed frame.
+- Original email HTML is sanitized server-side; allowed remote images are fetched through an SSRF-protected proxy and converted to local data URLs.
 
 ## Quick start
 
 ### Requirements
 
-- Node.js 24+
-- npm 11+
+- Go 1.26.5+
+- Node.js 24+ and npm 11+ for building the React frontend
 - Network access to Microsoft OAuth2, Outlook IMAP/SMTP, and Microsoft Graph
 
 ```bash
 git clone https://github.com/amine123max/Mail.git
 cd Mail
-npm install
+npm ci
 cp .env.example .env
 npm run dev
 ```
@@ -180,7 +182,9 @@ The built-in Device Code flow requests the permissions required by the hybrid tr
 
 ```text
 https://outlook.office.com/IMAP.AccessAsUser.All
+https://outlook.office.com/Mail.ReadWrite
 https://outlook.office.com/SMTP.Send
+https://graph.microsoft.com/Mail.ReadWrite
 https://graph.microsoft.com/Mail.Send
 offline_access
 ```
@@ -211,8 +215,8 @@ When deployed below `/mail`, the same routes become `/mail/inbox`, `/mail/sendma
 
 ```bash
 npm ci
-npm run build
-NODE_ENV=production npm start
+VITE_BASE_PATH=/mail/ npm run build
+NODE_ENV=production MAIL_WEB_ROOT=./dist ./build/mail-server
 ```
 
 For Docker:
@@ -224,6 +228,10 @@ docker compose up -d --build
 For an Nginx subpath deployment, build with `VITE_BASE_PATH=/mail/`, set `MAIL_COOKIE_PATH=/mail`, and keep the trailing slash in:
 
 ```nginx
+location = /mail {
+  return 301 /mail/;
+}
+
 location /mail/ {
   proxy_pass http://127.0.0.1:3000/;
   proxy_set_header Host $host;
@@ -237,23 +245,26 @@ Do not commit `.env`, SQLite files, master keys, backups, passwords, or mailbox 
 ## Verification
 
 ```bash
-npm run typecheck
 npm test
+npm run vet
+npm run typecheck
 npm run build
-npm audit --omit=dev
+npm run audit
 ```
 
-The regression suite covers account import/export, browser routes, first-run setup, five-minute email verification, announcement delivery, safe HTML rendering, and multi-tenant account isolation.
+The regression suite covers Node-compatible password and encryption formats, legacy SQLite migration, account isolation and guest transfer, import/export, browser routes, SMTP and IMAP XOAUTH2 payloads, Graph request mapping, five-minute verification mail, safe MIME/HTML rendering, and SSRF boundaries.
 
 ## Project structure
 
 ```text
 Mail/
+├── cmd/mail/            Go production server entry point
+├── cmd/bootstrap-admin/ Go first-run administrator CLI
+├── internal/            Auth, HTTP API, SQLite, crypto, IMAP, SMTP and Graph
 ├── src/                 React application and responsive UI
-├── src/components/      Compose and shared interface components
-├── server/              Express API, identity, SQLite, OAuth2, IMAP, SMTP
+├── server/              Legacy Node migration reference and compatibility tests
 ├── public/              Brand assets and local fonts
-├── docs/images/         README screenshots
+├── docs/images/         Sanitized README screenshots
 ├── Dockerfile
 ├── docker-compose.yml
 └── .env.example

@@ -2,28 +2,27 @@
   "name": "mail",
   "version": "1.0.0",
   "private": true,
-  "description": "Outlook and Hotmail mailbox manager powered by SQLite",
+  "description": "Go-powered Outlook, Hotmail and Microsoft Graph mailbox manager with SQLite",
   "scripts": {
-    "dev": "concurrently -k -n api,web -c cyan,magenta \"tsx watch server/index.ts\" \"vite\"",
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"go run ./cmd/mail\" \"vite\"",
+    "dev:api": "go run ./cmd/mail",
     "build": "npm run build:web && npm run build:server",
     "build:web": "vite build",
-    "build:server": "tsc -p tsconfig.server.json",
-    "start": "cross-env NODE_ENV=production node build/server/index.js",
-    "bootstrap-admin": "node build/server/bootstrap-admin.js",
-    "test": "tsx --test server/**/*.test.ts",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
+    "build:server": "go build -trimpath -o build/mail-server ./cmd/mail && go build -trimpath -o build/bootstrap-admin ./cmd/bootstrap-admin",
+    "start": "go run ./cmd/mail",
+    "bootstrap-admin": "go run ./cmd/bootstrap-admin",
+    "test": "npm run test:go && npm run test:legacy",
+    "test:go": "go test ./...",
+    "test:legacy": "tsx --test server/**/*.test.ts",
+    "vet": "go vet ./...",
+    "audit": "npm audit --omit=dev --registry=https://registry.npmjs.org",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "check": "npm run test && npm run vet && npm run typecheck"
   },
   "dependencies": {
-    "dotenv": "^17.2.0",
-    "express": "^5.1.0",
-    "imapflow": "^1.0.193",
     "lucide-react": "^0.468.0",
-    "mailparser": "^3.7.2",
-    "nodemailer": "^9.0.3",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "sanitize-html": "^2.17.0",
-    "zod": "^3.25.67"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
@@ -35,9 +34,15 @@
     "@types/sanitize-html": "^2.16.0",
     "@vitejs/plugin-react": "^4.5.2",
     "concurrently": "^9.1.2",
-    "cross-env": "^10.0.0",
+    "dotenv": "^17.2.0",
+    "express": "^5.1.0",
+    "imapflow": "^1.0.193",
+    "mailparser": "^3.7.2",
+    "nodemailer": "^9.0.3",
+    "sanitize-html": "^2.17.0",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "zod": "^3.25.67"
   }
 }

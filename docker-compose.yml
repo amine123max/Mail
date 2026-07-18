@@ -5,6 +5,7 @@ services:
       args:
         VITE_BASE_PATH: ${VITE_BASE_PATH:-/mail/}
     restart: unless-stopped
+    init: true
     ports:
       - "127.0.0.1:${MAIL_BIND_PORT:-3000}:3000"
     environment:
@@ -22,8 +23,23 @@ services:
       MAIL_DATA_DIR: /app/data
       MAIL_COOKIE_PATH: ${MAIL_COOKIE_PATH:-/mail}
       MAIL_TRUST_PROXY: 1
+      OUTLOOK_IMAP_HOST: ${OUTLOOK_IMAP_HOST:-outlook.office365.com}
+      OUTLOOK_SMTP_HOST: ${OUTLOOK_SMTP_HOST:-smtp-mail.outlook.com}
     volumes:
       - mail-data:/app/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   mail-data:
