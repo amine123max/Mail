@@ -11,12 +11,12 @@ RUN npm run build:web
 
 FROM golang:1.26.5-alpine AS go-build
 WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-COPY cmd ./cmd
-COPY internal ./internal
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/mail-server ./cmd/mail \
-    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/bootstrap-admin ./cmd/bootstrap-admin
+COPY go.work ./
+COPY server/go.mod server/go.sum ./server/
+RUN cd server && go mod download
+COPY server ./server
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/mail-server ./server/cmd/mail \
+    && CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/bootstrap-admin ./server/cmd/bootstrap-admin
 
 FROM alpine:3.22 AS runtime
 RUN apk add --no-cache ca-certificates tzdata \

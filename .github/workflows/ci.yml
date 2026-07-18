@@ -14,16 +14,17 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: "1.26.5"
           cache: true
+          cache-dependency-path: server/go.sum
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
@@ -33,13 +34,12 @@ jobs:
 
       - name: Test and vet Go backend
         run: |
-          go test ./...
-          go vet ./...
+          go test ./server/...
+          go vet ./server/...
 
-      - name: Verify frontend and migration reference
+      - name: Verify frontend
         run: |
           npm run typecheck
-          npm run test:legacy
           VITE_BASE_PATH=/mail/ npm run build:web
 
       - name: Audit production npm dependencies

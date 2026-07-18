@@ -4,19 +4,18 @@
   "private": true,
   "description": "Go-powered Outlook, Hotmail and Microsoft Graph mailbox manager with SQLite",
   "scripts": {
-    "dev": "concurrently -k -n api,web -c cyan,magenta \"go run ./cmd/mail\" \"vite\"",
-    "dev:api": "go run ./cmd/mail",
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"go run ./server/cmd/mail\" \"vite\"",
+    "dev:api": "go run ./server/cmd/mail",
     "build": "npm run build:web && npm run build:server",
     "build:web": "vite build",
-    "build:server": "go build -trimpath -o build/mail-server ./cmd/mail && go build -trimpath -o build/bootstrap-admin ./cmd/bootstrap-admin",
-    "start": "go run ./cmd/mail",
-    "bootstrap-admin": "go run ./cmd/bootstrap-admin",
-    "test": "npm run test:go && npm run test:legacy",
-    "test:go": "go test ./...",
-    "test:legacy": "tsx --test server/**/*.test.ts",
-    "vet": "go vet ./...",
+    "build:server": "node -e \"require('node:fs').mkdirSync('build',{recursive:true})\" && go build -trimpath -o build/mail-server ./server/cmd/mail && go build -trimpath -o build/bootstrap-admin ./server/cmd/bootstrap-admin",
+    "start": "go run ./server/cmd/mail",
+    "bootstrap-admin": "go run ./server/cmd/bootstrap-admin",
+    "test": "npm run test:go",
+    "test:go": "go test ./server/...",
+    "vet": "go vet ./server/...",
     "audit": "npm audit --omit=dev --registry=https://registry.npmjs.org",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "typecheck": "tsc --noEmit",
     "check": "npm run test && npm run vet && npm run typecheck"
   },
   "dependencies": {
@@ -25,24 +24,12 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
-    "@types/express": "^5.0.3",
-    "@types/mailparser": "^3.4.6",
     "@types/node": "^24.0.3",
-    "@types/nodemailer": "^8.0.1",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
-    "@types/sanitize-html": "^2.16.0",
     "@vitejs/plugin-react": "^4.5.2",
     "concurrently": "^9.1.2",
-    "dotenv": "^17.2.0",
-    "express": "^5.1.0",
-    "imapflow": "^1.0.193",
-    "mailparser": "^3.7.2",
-    "nodemailer": "^9.0.3",
-    "sanitize-html": "^2.17.0",
-    "tsx": "^4.20.3",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5",
-    "zod": "^3.25.67"
+    "vite": "^6.3.5"
   }
 }

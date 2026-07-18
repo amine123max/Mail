@@ -33,7 +33,7 @@ Mail brings receiving, reading, organizing, and sending email into one responsiv
 
 The interface is designed for desktop and mobile use, supports English and Chinese, includes light and dark themes, and provides a dedicated administration workspace for users, activity, and announcements.
 
-The production runtime is a single Go binary that serves both the API and the compiled React application. Node.js is used only for frontend builds and the retained migration-reference test suite; Express is not part of the deployed service.
+The production runtime is a single Go binary that serves both the API and the compiled React application. Node.js is used only to build the frontend; the former Express and TypeScript backend has been removed.
 
 ## Why Mail
 
@@ -258,25 +258,20 @@ The regression suite covers Node-compatible password and encryption formats, leg
 
 ```text
 Mail/
-├── cmd/mail/            Go production server entry point
-├── cmd/bootstrap-admin/ Go first-run administrator CLI
-├── internal/            Auth, HTTP API, SQLite, crypto, IMAP, SMTP and Graph
+├── server/              Complete Go backend
+│   ├── cmd/mail/        Production server entry point
+│   ├── cmd/bootstrap-admin/
+│   ├── internal/        Auth, HTTP API, SQLite, crypto, IMAP, SMTP and Graph
+│   ├── go.mod
+│   └── go.sum
 ├── src/                 React application and responsive UI
-├── server/              Legacy Node migration reference and compatibility tests
 ├── public/              Brand assets and local fonts
 ├── docs/images/         Sanitized README screenshots
+├── go.work              Go workspace pointing to server/
 ├── Dockerfile
 ├── docker-compose.yml
 └── .env.example
 ```
-
-## Acknowledgements
-
-- [CN-Root/OutlookPanel](https://github.com/CN-Root/OutlookPanel) — Outlook account import and mailbox workflow reference.
-- [oiov/wr.do](https://github.com/oiov/wr.do) — visual language and navigation inspiration.
-- [Lucide](https://lucide.dev/) — interface icons.
-
-Mail is an independent project and is not affiliated with or endorsed by Microsoft.
 
 ## Security
 
