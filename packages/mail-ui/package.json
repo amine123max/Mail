@@ -1,0 +1,10 @@
+{
+  "name": "@aillive/mail-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./routes": "./src/routes.ts"
+  }
+}

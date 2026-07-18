@@ -16,7 +16,10 @@
     "vet": "go vet ./server/...",
     "audit": "npm audit --omit=dev --registry=https://registry.npmjs.org",
     "typecheck": "tsc --noEmit",
-    "check": "npm run test && npm run vet && npm run typecheck"
+    "contract:generate": "node scripts/generate-desktop-contract.mjs",
+    "contract:check": "node scripts/generate-desktop-contract.mjs --check",
+    "check:desktop-source": "node scripts/check-desktop-source-drift.mjs",
+    "check": "npm run contract:check && npm run check:desktop-source && npm run test && npm run vet && npm run typecheck"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

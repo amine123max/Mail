@@ -1,0 +1,249 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Aillive Mail Desktop API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/desktop/capabilities": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Desktop capabilities",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DesktopCapabilities" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/desktop/sessions": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DesktopSessionCreateRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created desktop session",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DesktopSessionResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/desktop/sessions/migrate": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DesktopSessionMigrateRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Migrated desktop session",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DesktopSessionResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/desktop/sessions/refresh": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/DesktopSessionRefreshRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rotated desktop session",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DesktopSessionResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/desktop/devices": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "Desktop devices",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DesktopDeviceListResponse" }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "responses": {
+          "204": { "description": "All devices revoked" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DesktopApiError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "details", "requestId", "retryable", "retryAfter"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "details": {},
+          "requestId": { "type": "string" },
+          "retryable": { "type": "boolean" },
+          "retryAfter": { "type": ["integer", "null"] }
+        }
+      },
+      "DesktopMaintenanceState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["active", "message", "retryAfter"],
+        "properties": {
+          "active": { "type": "boolean" },
+          "message": { "type": ["string", "null"] },
+          "retryAfter": { "type": ["integer", "null"] }
+        }
+      },
+      "DesktopCapabilitiesLimits": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["maxJsonRequestBytes", "maxJsonResponseBytes", "maxAttachmentUploadBytes", "maxAttachmentDownloadBytes"],
+        "properties": {
+          "maxJsonRequestBytes": { "type": "integer" },
+          "maxJsonResponseBytes": { "type": "integer" },
+          "maxAttachmentUploadBytes": { "type": "integer" },
+          "maxAttachmentDownloadBytes": { "type": "integer" }
+        }
+      },
+      "DesktopSyncCapabilities": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["protocolVersion", "providers", "incremental", "cursorReset"],
+        "properties": {
+          "protocolVersion": { "type": "integer" },
+          "providers": { "type": "array", "items": { "type": "string" } },
+          "incremental": { "type": "boolean" },
+          "cursorReset": { "type": "boolean" }
+        }
+      },
+      "DesktopCapabilities": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["apiVersion", "minimumClientVersion", "latestClientVersion", "features", "limits", "sync", "maintenance"],
+        "properties": {
+          "apiVersion": { "type": "string" },
+          "minimumClientVersion": { "type": "string" },
+          "latestClientVersion": { "type": "string" },
+          "features": { "type": "object", "additionalProperties": { "type": "boolean" } },
+          "limits": { "$ref": "#/components/schemas/DesktopCapabilitiesLimits" },
+          "sync": { "$ref": "#/components/schemas/DesktopSyncCapabilities" },
+          "maintenance": { "$ref": "#/components/schemas/DesktopMaintenanceState" }
+        }
+      },
+      "DesktopSessionUser": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "username", "administrator"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "username": { "type": "string" },
+          "administrator": { "type": "boolean" }
+        }
+      },
+      "DesktopSessionCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["email", "password", "deviceId", "deviceName"],
+        "properties": {
+          "email": { "type": "string" },
+          "password": { "type": "string" },
+          "deviceId": { "type": "string" },
+          "deviceName": { "type": "string" }
+        }
+      },
+      "DesktopSessionMigrateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["deviceId", "deviceName"],
+        "properties": {
+          "deviceId": { "type": "string" },
+          "deviceName": { "type": "string" }
+        }
+      },
+      "DesktopSessionRefreshRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["refreshToken"],
+        "properties": {
+          "refreshToken": { "type": "string" }
+        }
+      },
+      "DesktopSessionResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["accessToken", "refreshToken", "tokenType", "expiresIn", "refreshExpiresAt", "deviceId", "user"],
+        "properties": {
+          "accessToken": { "type": "string" },
+          "refreshToken": { "type": "string" },
+          "tokenType": { "type": "string" },
+          "expiresIn": { "type": "integer" },
+          "refreshExpiresAt": { "type": "string" },
+          "deviceId": { "type": "string" },
+          "user": { "$ref": "#/components/schemas/DesktopSessionUser" }
+        }
+      },
+      "DesktopDeviceSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["deviceId", "deviceName", "clientVersion", "createdAt", "lastUsedAt", "expiresAt", "revokedAt", "current"],
+        "properties": {
+          "deviceId": { "type": "string" },
+          "deviceName": { "type": "string" },
+          "clientVersion": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "lastUsedAt": { "type": "string" },
+          "expiresAt": { "type": "string" },
+          "revokedAt": { "type": ["string", "null"] },
+          "current": { "type": "boolean" }
+        }
+      },
+      "DesktopDeviceListResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["devices"],
+        "properties": {
+          "devices": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/DesktopDeviceSummary" }
+          }
+        }
+      }
+    }
+  }
+}

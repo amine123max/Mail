@@ -60,6 +60,7 @@ import { ImportDialog } from "./components/ImportDialog";
 import { OAuthPage } from "./components/OAuthPage";
 import { SidebarAccounts } from "./components/SidebarAccounts";
 import { useI18n } from "./i18n";
+import versionInfo from "../version.json";
 import {
   mailPath,
   parseMailPath,
@@ -96,6 +97,12 @@ type MessageMoveConfirmation = {
 };
 const brandLogoUrl = `${import.meta.env.BASE_URL}paper-plane-logo.png`;
 const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+const desktopReleaseBaseUrl = `https://github.com/amine123max/Mail/releases/download/v${versionInfo.version}`;
+const desktopDownloads = [
+  { title: "Windows 安装版", detail: "EXE · x64", filename: `AilliveMail_${versionInfo.version}_x64-setup.exe`, recommended: true },
+  { title: "Windows MSI", detail: "MSI · x64", filename: `AilliveMail_${versionInfo.version}_x64_zh-CN.msi`, recommended: false },
+  { title: "Windows 便携版", detail: "EXE · 免安装", filename: "AilliveMail.exe", recommended: false },
+] as const;
 const avatarGradients = [
   "linear-gradient(145deg, #7c3aed, #3b0764)",
   "linear-gradient(145deg, #2563eb, #172554)",
@@ -875,6 +882,8 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
   const successTimerRef = useRef<number | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [downloadOpen, setDownloadOpen] = useState(false);
+  const downloadMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (resendSeconds <= 0) return;
@@ -885,6 +894,22 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
   useEffect(() => () => {
     if (successTimerRef.current !== null) window.clearTimeout(successTimerRef.current);
   }, []);
+
+  useEffect(() => {
+    if (!downloadOpen) return;
+    const closeOutside = (event: PointerEvent) => {
+      if (!downloadMenuRef.current?.contains(event.target as Node)) setDownloadOpen(false);
+    };
+    const closeWithEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDownloadOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("keydown", closeWithEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("keydown", closeWithEscape);
+    };
+  }, [downloadOpen]);
 
   const changeMode = (next: "login" | "register") => {
     setMode(next);
@@ -1000,6 +1025,15 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
   return (
     <div className={`login-page ${successTransition ? "auth-transitioning" : ""}`}>
       <div className="login-actions">
+        <div ref={downloadMenuRef} className={`login-download ${downloadOpen ? "open" : ""}`}>
+          <button className="login-download-trigger" type="button" aria-haspopup="menu" aria-expanded={downloadOpen} onClick={() => setDownloadOpen((open) => !open)}><Download size={15} /><span>{t("下载客户端")}</span><ChevronDown size={13} /></button>
+          {downloadOpen && <div className="login-download-popover" role="menu">
+            <header><div><strong>{t("Mail 桌面客户端")}</strong><span>v{versionInfo.version}</span></div><small>Windows x64</small></header>
+            <div className="login-download-list">
+              {desktopDownloads.map((item) => <a key={item.filename} role="menuitem" href={`${desktopReleaseBaseUrl}/${item.filename}`} onClick={() => setDownloadOpen(false)}><span className="login-download-item-icon"><Download size={14} /></span><span><strong>{t(item.title)}</strong><small>{t(item.detail)}</small></span>{item.recommended && <em>{t("推荐")}</em>}</a>)}
+            </div>
+          </div>}
+        </div>
         <button className="language-toggle" onClick={() => setLanguage(language === "zh" ? "en" : "zh")} aria-label={t("界面语言")}><Languages size={15} /> {language === "zh" ? "EN" : "中文"}</button>
         <button className="login-theme icon-button" onClick={() => setDark(!dark)}>{dark ? <Sun size={18} /> : <Moon size={18} />}</button>
       </div>

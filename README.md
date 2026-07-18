@@ -92,6 +92,9 @@ All screenshots use fictional demonstration data. No production mailbox, token, 
 ```mermaid
 flowchart LR
   Browser[React web app] -->|Signed HttpOnly cookie| API[Go HTTP API]
+  Desktop[Local React desktop UI] -->|Restricted Tauri commands| Rust[Rust desktop core]
+  Rust -->|HTTPS Desktop API v1| API
+  Rust -. P0-04 .-> Cache[(Per-user encrypted desktop cache)]
   API --> Identity{Owner scope}
   Identity --> User[Authenticated user]
   Identity --> Guest[Isolated guest]
@@ -102,6 +105,8 @@ flowchart LR
   OAuth --> SMTP[SMTP send]
   OAuth --> Graph[Graph receive and send]
 ```
+
+The desktop executable packages its React UI locally. Rust owns Windows integration and the restricted HTTPS client; the executable never connects directly to Microsoft OAuth, Graph, IMAP, or SMTP. The current production data store is the server-side SQLite database. The per-user desktop SQLite mail cache shown above is the P0-04 target and is not enabled yet.
 
 ### Mail transport
 

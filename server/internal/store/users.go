@@ -55,6 +55,10 @@ func (s *Store) UpdateUserPassword(ctx context.Context, userID int64, passwordHa
 	if _, err := tx.ExecContext(ctx, "DELETE FROM user_sessions WHERE user_id=?", userID); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `UPDATE desktop_sessions SET revoked_at=?,revoke_reason='PASSWORD_RESET'
+		WHERE user_id=? AND revoked_at IS NULL`, nowISO(), userID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -288,6 +292,13 @@ func (s *Store) CleanupExpired(ctx context.Context) error {
 		}
 	}
 	if _, err := s.db.ExecContext(ctx, "DELETE FROM user_sessions WHERE expires_at<=?", now); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE desktop_sessions SET revoked_at=?,revoke_reason='SESSION_EXPIRED'
+		WHERE revoked_at IS NULL AND (absolute_expires_at<=? OR idle_expires_at<=?)`, now, now, now); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM desktop_session_tokens WHERE expires_at<=?", now); err != nil {
 		return err
 	}
 	_, err = s.db.ExecContext(ctx, "DELETE FROM email_verifications WHERE expires_at<=? OR attempts>=5", now)

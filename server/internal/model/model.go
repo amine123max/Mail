@@ -1,5 +1,7 @@
 package model
 
+import "github.com/amine123max/Mail/server/internal/desktopcontract"
+
 type StoredAccount struct {
 	ID                    int64
 	OwnerKey              string
@@ -80,3 +82,20 @@ type Identity struct {
 	IsAdmin  bool
 	GuestID  string
 }
+
+type DesktopSession struct {
+	ID                string
+	FamilyID          string
+	DeviceID          string
+	UserID            int64
+	DeviceName        string
+	ClientVersion     string
+	CreatedAt         string
+	LastUsedAt        string
+	IdleExpiresAt     string
+	AbsoluteExpiresAt string
+	RevokedAt         *string
+	RevokeReason      *string
+}
+
+type DesktopDeviceSummary = desktopcontract.DesktopDeviceSummary

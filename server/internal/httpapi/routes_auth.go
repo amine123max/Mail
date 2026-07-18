@@ -65,7 +65,13 @@ func (s *Server) requestVerification(response http.ResponseWriter, request *http
 	}
 	result, err := s.auth.RequestRegistrationCode(request.Context(), body.Email, body.Purpose, body.Language)
 	if err != nil {
+		s.auditSecurity(request, "verification_code", "failed", securityErrorCode(err), 0, "")
 		return err
+	}
+	if result.Suppressed {
+		s.auditSecurity(request, "verification_code", "suppressed", "VERIFICATION_REQUEST_ACCEPTED", 0, "")
+	} else {
+		s.auditSecurity(request, "verification_code", "succeeded", "VERIFICATION_SENT", 0, "")
 	}
 	writeJSON(response, http.StatusOK, result)
 	return nil
@@ -119,8 +125,7 @@ func (s *Server) login(response http.ResponseWriter, request *http.Request) erro
 		return err
 	}
 	if user == nil {
-		writeJSON(response, http.StatusUnauthorized, map[string]any{"error": "邮箱或密码错误", "code": "LOGIN_FAILED"})
-		return nil
+		return apiFailure(http.StatusUnauthorized, "LOGIN_FAILED", "邮箱或密码错误", nil)
 	}
 	guestID, err := s.auth.GuestID(request.Context(), request)
 	if err != nil {

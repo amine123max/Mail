@@ -1,0 +1,9 @@
+{
+  "name": "@aillive/api-types",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

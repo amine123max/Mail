@@ -74,6 +74,31 @@ func (s *Store) initialize(ctx context.Context) error {
 			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
 		);
 
+		CREATE TABLE IF NOT EXISTS desktop_sessions (
+			id TEXT PRIMARY KEY,
+			family_id TEXT NOT NULL,
+			device_id TEXT NOT NULL,
+			user_id INTEGER NOT NULL,
+			device_name TEXT NOT NULL,
+			client_version TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			last_used_at TEXT NOT NULL,
+			idle_expires_at TEXT NOT NULL,
+			absolute_expires_at TEXT NOT NULL,
+			revoked_at TEXT,
+			revoke_reason TEXT,
+			FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+		);
+
+		CREATE TABLE IF NOT EXISTS desktop_session_tokens (
+			token_hash TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			used_at TEXT,
+			FOREIGN KEY(session_id) REFERENCES desktop_sessions(id) ON DELETE CASCADE
+		);
+
 		CREATE TABLE IF NOT EXISTS email_verifications (
 			email_hash TEXT PRIMARY KEY,
 			email_encrypted TEXT NOT NULL,
@@ -113,6 +138,10 @@ func (s *Store) initialize(ctx context.Context) error {
 		CREATE INDEX IF NOT EXISTS idx_accounts_owner_sort ON accounts(owner_key, sort_order ASC, id DESC);
 		CREATE INDEX IF NOT EXISTS idx_guest_sessions_expiry ON guest_sessions(expires_at);
 		CREATE INDEX IF NOT EXISTS idx_user_sessions_expiry ON user_sessions(expires_at);
+		CREATE INDEX IF NOT EXISTS idx_desktop_sessions_user_device ON desktop_sessions(user_id, device_id, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_desktop_sessions_expiry ON desktop_sessions(absolute_expires_at, idle_expires_at);
+		CREATE INDEX IF NOT EXISTS idx_desktop_session_tokens_session ON desktop_session_tokens(session_id, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_desktop_session_tokens_expiry ON desktop_session_tokens(expires_at);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_hash ON users(email_hash) WHERE email_hash IS NOT NULL;
 		CREATE INDEX IF NOT EXISTS idx_email_verifications_expiry ON email_verifications(expires_at);
 		CREATE INDEX IF NOT EXISTS idx_announcements_created ON announcements(created_at DESC, id DESC);

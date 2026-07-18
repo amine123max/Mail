@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/amine123max/Mail/server/internal/auth"
 	"github.com/amine123max/Mail/server/internal/config"
+	"github.com/amine123max/Mail/server/internal/desktopcontract"
 	"github.com/amine123max/Mail/server/internal/mailservice"
 	"github.com/amine123max/Mail/server/internal/model"
 	"github.com/amine123max/Mail/server/internal/store"
@@ -27,6 +29,8 @@ import (
 type handler func(http.ResponseWriter, *http.Request) error
 
 type identityKey struct{}
+type requestIDKey struct{}
+type desktopSessionKey struct{}
 
 type rateRecord struct {
 	Count   int
@@ -57,6 +61,16 @@ type ValidationError struct {
 
 func (e *ValidationError) Error() string { return e.Message }
 
+type APIError struct {
+	Message   string
+	Code      string
+	Status    int
+	Details   any
+	Retryable bool
+}
+
+func (e *APIError) Error() string { return e.Message }
+
 func New(cfg config.Config, storage *store.Store, authentication *auth.Service, mail *mailservice.Service) *Server {
 	server := &Server{
 		cfg: cfg, store: storage, auth: authentication, mail: mail, mux: http.NewServeMux(),
@@ -72,6 +86,7 @@ func (s *Server) Handler() http.Handler {
 	if s.cfg.CookiePath != "/" {
 		handler = s.stripBasePath(handler)
 	}
+	handler = s.requestMetadata(handler)
 	return s.securityHeaders(handler)
 }
 
@@ -94,6 +109,15 @@ func (s *Server) stripBasePath(next http.Handler) http.Handler {
 
 func (s *Server) routes() {
 	s.handle("GET /api/health", s.health)
+	s.handle("GET /api/desktop/capabilities", s.desktopCapabilities)
+	s.handle("GET /api/v1/desktop/capabilities", s.desktopCapabilities)
+	s.handle("POST /api/v1/desktop/sessions", s.withRateLimit(s.authLimit, s.createDesktopSession))
+	s.handle("POST /api/v1/desktop/sessions/migrate", s.withRateLimit(s.authLimit, s.migrateDesktopSession))
+	s.handle("POST /api/v1/desktop/sessions/refresh", s.withRateLimit(s.authLimit, s.refreshDesktopSession))
+	s.handleDesktopIdentity("DELETE /api/v1/desktop/sessions/current", s.withRateLimit(s.authLimit, s.deleteCurrentDesktopSession))
+	s.handleDesktopIdentity("GET /api/v1/desktop/devices", s.listDesktopDevices)
+	s.handleDesktopIdentity("DELETE /api/v1/desktop/devices/{deviceId}", s.withRateLimit(s.authLimit, s.deleteDesktopDevice))
+	s.handleDesktopIdentity("DELETE /api/v1/desktop/devices", s.withRateLimit(s.authLimit, s.deleteAllDesktopDevices))
 	s.handle("GET /api/auth/status", s.authStatus)
 	s.handle("POST /api/auth/verification/request", s.withRateLimit(s.authLimit, s.requestVerification))
 	s.handle("POST /api/auth/setup", s.withRateLimit(s.authLimit, s.setupAdministrator))
@@ -140,8 +164,19 @@ func (s *Server) handle(pattern string, next handler) {
 			response.Header().Set("Pragma", "no-cache")
 		}
 		if err := next(response, request); err != nil {
-			s.writeError(response, err)
+			s.writeError(response, request, err)
 		}
+	})
+}
+
+func (s *Server) requestMetadata(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		requestID := strings.TrimSpace(request.Header.Get("X-Request-Id"))
+		if !validRequestID(requestID) {
+			requestID = newRequestID()
+		}
+		response.Header().Set("X-Request-Id", requestID)
+		next.ServeHTTP(response, request.WithContext(context.WithValue(request.Context(), requestIDKey{}, requestID)))
 	})
 }
 
@@ -150,6 +185,13 @@ func (s *Server) handleIdentity(pattern string, userOnly, administrator bool, ne
 		identity, err := s.auth.Identity(request.Context(), request)
 		if err != nil {
 			return err
+		}
+		var desktopSessionID string
+		if identity == nil && strings.HasPrefix(strings.TrimSpace(request.Header.Get("Authorization")), "Bearer ") {
+			identity, desktopSessionID, err = s.auth.DesktopIdentity(request.Context(), request)
+			if err != nil {
+				return err
+			}
 		}
 		if identity == nil {
 			return &auth.Error{Message: "请先登录或使用游客模式", Code: "IDENTITY_REQUIRED", Status: http.StatusUnauthorized}
@@ -160,8 +202,24 @@ func (s *Server) handleIdentity(pattern string, userOnly, administrator bool, ne
 		if administrator && (!identity.IsAdmin || identity.UserID == 0) {
 			return &auth.Error{Message: "仅管理员可以执行此操作", Code: "ADMIN_REQUIRED", Status: http.StatusForbidden}
 		}
-		request = request.WithContext(context.WithValue(request.Context(), identityKey{}, identity))
+		ctx := context.WithValue(request.Context(), identityKey{}, identity)
+		if desktopSessionID != "" {
+			ctx = context.WithValue(ctx, desktopSessionKey{}, desktopSessionID)
+		}
+		request = request.WithContext(ctx)
 		return next(response, request)
+	})
+}
+
+func (s *Server) handleDesktopIdentity(pattern string, next handler) {
+	s.handle(pattern, func(response http.ResponseWriter, request *http.Request) error {
+		identity, sessionID, err := s.auth.DesktopIdentity(request.Context(), request)
+		if err != nil {
+			return err
+		}
+		ctx := context.WithValue(request.Context(), identityKey{}, identity)
+		ctx = context.WithValue(ctx, desktopSessionKey{}, sessionID)
+		return next(response, request.WithContext(ctx))
 	})
 }
 
@@ -178,6 +236,7 @@ func (s *Server) withRateLimit(limiter *rateLimiter, next handler) handler {
 			if limiter == s.sendLimit {
 				code, message = "SEND_RATE_LIMIT", "发件频率过高，请稍后再试"
 			}
+			s.auditSecurity(request, "rate_limit", "blocked", code, 0, "")
 			return &auth.Error{Message: message, Code: code, Status: http.StatusTooManyRequests}
 		}
 		return next(response, request)
@@ -223,7 +282,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 
 func (s *Server) serveFrontend(response http.ResponseWriter, request *http.Request) {
 	if strings.HasPrefix(request.URL.Path, "/api/") {
-		writeJSON(response, http.StatusNotFound, map[string]any{"error": fmt.Sprintf("未找到接口 %s %s", request.Method, request.URL.Path)})
+		s.writeAPIError(response, request, http.StatusNotFound, "API_NOT_FOUND", fmt.Sprintf("未找到接口 %s %s", request.Method, request.URL.Path), nil, false)
 		return
 	}
 	if request.Method != http.MethodGet && request.Method != http.MethodHead {
@@ -249,24 +308,50 @@ func (s *Server) serveFrontend(response http.ResponseWriter, request *http.Reque
 	http.ServeFile(response, request, index)
 }
 
-func (s *Server) writeError(response http.ResponseWriter, err error) {
+func (s *Server) writeError(response http.ResponseWriter, request *http.Request, err error) {
+	var apiError *APIError
+	if errors.As(err, &apiError) {
+		s.writeAPIError(response, request, apiError.Status, apiError.Code, apiError.Message, apiError.Details, apiError.Retryable)
+		return
+	}
 	var validation *ValidationError
 	if errors.As(err, &validation) {
-		writeJSON(response, http.StatusBadRequest, map[string]any{"error": "请求参数不正确", "code": "VALIDATION_ERROR", "details": validation.Details})
+		s.writeAPIError(response, request, http.StatusBadRequest, "VALIDATION_ERROR", "请求参数不正确", validation.Details, false)
 		return
 	}
 	var authError *auth.Error
 	if errors.As(err, &authError) {
-		writeJSON(response, authError.Status, map[string]any{"error": authError.Message, "code": authError.Code})
+		s.writeAPIError(response, request, authError.Status, authError.Code, authError.Message, nil, authError.Status == http.StatusTooManyRequests || authError.Status >= 500)
 		return
 	}
 	var mailError *mailservice.Error
 	if errors.As(err, &mailError) {
-		writeJSON(response, mailError.Status, map[string]any{"error": mailError.Message, "code": mailError.Code})
+		s.writeAPIError(response, request, mailError.Status, mailError.Code, mailError.Message, nil, mailError.Status == http.StatusTooManyRequests || mailError.Status >= 500)
 		return
 	}
-	log.Printf("Mail API internal error: %v", err)
-	writeJSON(response, http.StatusInternalServerError, map[string]any{"error": "服务器内部错误", "code": "INTERNAL_ERROR"})
+	log.Printf("Mail API internal error requestId=%s: %v", requestIDFrom(request), err)
+	s.writeAPIError(response, request, http.StatusInternalServerError, "INTERNAL_ERROR", "服务器内部错误", nil, true)
+}
+
+func apiFailure(status int, code, message string, details any) *APIError {
+	return &APIError{Message: message, Code: code, Status: status, Details: details, Retryable: status == http.StatusTooManyRequests || status >= 500}
+}
+
+func (s *Server) writeAPIError(response http.ResponseWriter, request *http.Request, status int, code, message string, details any, retryable bool) {
+	var retryAfter *int
+	if value := strings.TrimSpace(response.Header().Get("Retry-After")); value != "" {
+		if seconds, err := strconv.Atoi(value); err == nil {
+			retryAfter = &seconds
+		}
+	}
+	writeJSON(response, status, desktopcontract.DesktopApiError{
+		Code:       code,
+		Message:    message,
+		Details:    details,
+		RequestId:  requestIDFrom(request),
+		Retryable:  retryable,
+		RetryAfter: retryAfter,
+	})
 }
 
 func decodeJSON(response http.ResponseWriter, request *http.Request, target any) error {
@@ -291,6 +376,39 @@ func writeJSON(response http.ResponseWriter, status int, value any) {
 func identityFrom(request *http.Request) *model.Identity {
 	identity, _ := request.Context().Value(identityKey{}).(*model.Identity)
 	return identity
+}
+
+func requestIDFrom(request *http.Request) string {
+	requestID, _ := request.Context().Value(requestIDKey{}).(string)
+	return requestID
+}
+
+func desktopSessionIDFrom(request *http.Request) string {
+	sessionID, _ := request.Context().Value(desktopSessionKey{}).(string)
+	return sessionID
+}
+
+func validRequestID(value string) bool {
+	if len(value) < 8 || len(value) > 128 {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || character == '-' || character == '_' || character == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func newRequestID() string {
+	buffer := make([]byte, 16)
+	if _, err := rand.Read(buffer); err != nil {
+		return fmt.Sprintf("req-%d", time.Now().UnixNano())
+	}
+	buffer[6] = (buffer[6] & 0x0f) | 0x40
+	buffer[8] = (buffer[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", buffer[0:4], buffer[4:6], buffer[6:8], buffer[8:10], buffer[10:16])
 }
 
 func parseID(value string) (int64, error) {
@@ -340,4 +458,25 @@ func (s *Server) clientIP(request *http.Request) string {
 		return host
 	}
 	return request.RemoteAddr
+}
+
+func (s *Server) auditSecurity(request *http.Request, event, result, code string, userID int64, deviceID string) {
+	log.Printf(
+		"Mail security event=%s result=%s code=%s requestId=%s userId=%d deviceId=%s clientIp=%s",
+		event,
+		result,
+		code,
+		requestIDFrom(request),
+		userID,
+		deviceID,
+		s.clientIP(request),
+	)
+}
+
+func securityErrorCode(err error) string {
+	var authError *auth.Error
+	if errors.As(err, &authError) && authError.Code != "" {
+		return authError.Code
+	}
+	return "INTERNAL_ERROR"
 }

@@ -6,3 +6,4 @@ data/.master-key
 .env
 .DS_Store
 npm-debug.log*
+/desktop-client/

@@ -1,68 +1,15 @@
-export interface Account {
-  id: number;
-  email: string;
-  remark: string;
-  group: string;
-  createdAt: string;
-  updatedAt: string;
-  lastSyncAt: string | null;
-}
+import { ApiError } from "@aillive/api-types";
 
-export interface MailFolder {
-  path: string;
-  name: string;
-  specialUse: string | null;
-  delimiter: string;
-}
-
-export interface MessageSummary {
-  uid: number | string;
-  subject: string;
-  from: string;
-  fromEmail: string;
-  to: string;
-  date: string;
-  unread: boolean;
-  flagged: boolean;
-  preview: string;
-}
-
-export interface Announcement {
-  id: number;
-  title: string;
-  content: string;
-  author: string;
-  createdAt: string;
-  read: boolean;
-}
-
-export interface MessageDetail {
-  uid: number | string;
-  subject: string;
-  from: string;
-  to: string;
-  cc: string;
-  date: string;
-  html: string;
-  text: string;
-  attachments: Array<{
-    index: number;
-    filename: string;
-    contentType: string;
-    size: number;
-  }>;
-}
-
-export class ApiError extends Error {
-  constructor(
-    message: string,
-    public readonly status: number,
-    public readonly code?: string,
-    public readonly details?: unknown,
-  ) {
-    super(message);
-  }
-}
+export { ApiError } from "@aillive/api-types";
+export type {
+  Account,
+  Announcement,
+  DesktopApiErrorBody,
+  DesktopCapabilities,
+  MailFolder,
+  MessageDetail,
+  MessageSummary,
+} from "@aillive/api-types";
 
 const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -85,15 +32,22 @@ export async function api<T>(
   if (response.status === 204) return undefined as T;
   const data = (await response.json().catch(() => ({}))) as {
     error?: string;
+    message?: string;
     code?: string;
     details?: unknown;
+    requestId?: string;
+    retryable?: boolean;
+    retryAfter?: number | null;
   };
   if (!response.ok) {
     throw new ApiError(
-      data.error || `请求失败（${response.status}）`,
+      data.message || data.error || `请求失败（${response.status}）`,
       response.status,
       data.code,
       data.details,
+      data.requestId,
+      Boolean(data.retryable),
+      data.retryAfter ?? undefined,
     );
   }
   return data as T;

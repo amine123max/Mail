@@ -26,6 +26,11 @@ type Config struct {
 	VerificationSMTPUser     string
 	VerificationSMTPPassword string
 	VerificationFrom         string
+	DesktopMinimumVersion    string
+	DesktopLatestVersion     string
+	DesktopMaintenance       bool
+	DesktopMaintenanceNotice string
+	DesktopMaintenanceRetry  int
 	IMAPHosts                []string
 	SMTPHosts                []string
 	WebRoot                  string
@@ -84,10 +89,19 @@ func Load() (Config, error) {
 		VerificationSMTPUser:     strings.TrimSpace(os.Getenv("MAIL_VERIFICATION_SMTP_USER")),
 		VerificationSMTPPassword: os.Getenv("MAIL_VERIFICATION_SMTP_PASSWORD"),
 		VerificationFrom:         strings.TrimSpace(os.Getenv("MAIL_VERIFICATION_FROM")),
+		DesktopMinimumVersion:    stringEnv("MAIL_DESKTOP_MINIMUM_VERSION", "1.0.0"),
+		DesktopLatestVersion:     stringEnv("MAIL_DESKTOP_LATEST_VERSION", "1.0.0"),
+		DesktopMaintenance:       os.Getenv("MAIL_DESKTOP_MAINTENANCE") == "1",
+		DesktopMaintenanceNotice: strings.TrimSpace(os.Getenv("MAIL_DESKTOP_MAINTENANCE_NOTICE")),
 		IMAPHosts:                uniqueHosts(stringEnv("OUTLOOK_IMAP_HOST", "outlook.office365.com"), "outlook.live.com"),
 		SMTPHosts:                uniqueHosts(stringEnv("OUTLOOK_SMTP_HOST", "smtp-mail.outlook.com"), "smtp.office365.com"),
 		WebRoot:                  filepath.Clean(stringEnv("MAIL_WEB_ROOT", "./dist")),
 	}
+	maintenanceRetry, err := integerEnv("MAIL_DESKTOP_MAINTENANCE_RETRY", 300)
+	if err != nil || maintenanceRetry < 0 || maintenanceRetry > 86400 {
+		return Config{}, errors.New("MAIL_DESKTOP_MAINTENANCE_RETRY 必须是 0-86400 之间的整数")
+	}
+	cfg.DesktopMaintenanceRetry = maintenanceRetry
 	if cfg.VerificationFrom == "" {
 		cfg.VerificationFrom = cfg.VerificationSMTPUser
 	}

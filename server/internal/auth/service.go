@@ -28,17 +28,21 @@ import (
 	"time"
 
 	"github.com/amine123max/Mail/server/internal/config"
+	"github.com/amine123max/Mail/server/internal/desktopcontract"
 	"github.com/amine123max/Mail/server/internal/model"
 	"github.com/amine123max/Mail/server/internal/store"
 	"golang.org/x/crypto/scrypt"
 )
 
 const (
-	VerificationLifetime = 5 * time.Minute
-	VerificationCooldown = 60 * time.Second
-	userLifetime         = 30 * 24 * time.Hour
-	guestLifetime        = 400 * 24 * time.Hour
-	dummyPasswordHash    = "scrypt:AAECAwQFBgcICQoLDA0ODw:sW1COcKH7Z2BDFE6mMHuCBgIPw6OwcK45RqKR1FrA7g"
+	VerificationLifetime   = 5 * time.Minute
+	VerificationCooldown   = 60 * time.Second
+	userLifetime           = 30 * 24 * time.Hour
+	guestLifetime          = 400 * 24 * time.Hour
+	desktopAccessLifetime  = 15 * time.Minute
+	desktopRefreshIdle     = 14 * 24 * time.Hour
+	desktopRefreshAbsolute = 30 * 24 * time.Hour
+	dummyPasswordHash      = "scrypt:AAECAwQFBgcICQoLDA0ODw:sW1COcKH7Z2BDFE6mMHuCBgIPw6OwcK45RqKR1FrA7g"
 )
 
 type Error struct {
@@ -59,6 +63,18 @@ type VerificationMessage struct {
 	Subject string
 	Text    string
 	HTML    string
+}
+
+type VerificationDispatchResult struct {
+	ExpiresIn  int  `json:"expiresIn"`
+	RetryAfter int  `json:"retryAfter"`
+	Suppressed bool `json:"-"`
+}
+
+type desktopAccessClaims struct {
+	SessionID string `json:"sid"`
+	UserID    int64  `json:"uid"`
+	ExpiresAt int64  `json:"exp"`
 }
 
 func New(cfg config.Config, storage *store.Store) *Service {
@@ -178,56 +194,58 @@ func (s *Service) BootstrapAdministrator(ctx context.Context, username, email, p
 	return user, err
 }
 
-func (s *Service) RequestRegistrationCode(ctx context.Context, email, purpose, language string) (map[string]int, error) {
+func (s *Service) RequestRegistrationCode(ctx context.Context, email, purpose, language string) (VerificationDispatchResult, error) {
 	email = normalizeEmail(email)
 	setup, err := s.store.IsSetupRequired(ctx)
 	if err != nil {
-		return nil, err
+		return VerificationDispatchResult{}, err
 	}
 	if purpose == "setup" && !setup {
-		return nil, authError("管理员初始化已完成", "SETUP_ALREADY_COMPLETED", http.StatusConflict)
+		return VerificationDispatchResult{}, authError("管理员初始化已完成", "SETUP_ALREADY_COMPLETED", http.StatusConflict)
 	}
 	if purpose == "register" && setup {
-		return nil, authError("请先完成管理员初始化", "SETUP_REQUIRED", http.StatusConflict)
+		return VerificationDispatchResult{}, authError("请先完成管理员初始化", "SETUP_REQUIRED", http.StatusConflict)
 	}
 	if purpose == "reset" && setup {
-		return nil, authError("请先完成管理员初始化", "SETUP_REQUIRED", http.StatusConflict)
+		return VerificationDispatchResult{}, authError("请先完成管理员初始化", "SETUP_REQUIRED", http.StatusConflict)
 	}
 	user, err := s.store.FindUserByEmail(ctx, email)
 	if err != nil {
-		return nil, err
+		return VerificationDispatchResult{}, err
 	}
-	if purpose == "reset" && user == nil {
-		return nil, authError("该邮箱尚未注册", "EMAIL_NOT_FOUND", http.StatusNotFound)
+	result := VerificationDispatchResult{
+		ExpiresIn:  int(VerificationLifetime.Seconds()),
+		RetryAfter: int(VerificationCooldown.Seconds()),
 	}
-	if purpose != "reset" && user != nil {
-		return nil, authError("该邮箱已被注册", "EMAIL_EXISTS", http.StatusConflict)
+	if (purpose == "reset" && user == nil) || (purpose != "reset" && user != nil) {
+		result.Suppressed = true
+		return result, nil
 	}
 	allowed, err := s.store.CanSendEmailVerification(ctx, email, VerificationCooldown)
 	if err != nil {
-		return nil, err
+		return VerificationDispatchResult{}, err
 	}
 	if !allowed {
-		return nil, authError("验证码发送过于频繁，请在 60 秒后重试", "VERIFICATION_COOLDOWN", http.StatusTooManyRequests)
+		return VerificationDispatchResult{}, authError("验证码发送过于频繁，请在 60 秒后重试", "VERIFICATION_COOLDOWN", http.StatusTooManyRequests)
 	}
 	code, err := randomDigits(6)
 	if err != nil {
-		return nil, err
+		return VerificationDispatchResult{}, err
 	}
 	expiresAt := time.Now().UTC().Add(VerificationLifetime)
 	if err := s.store.SaveEmailVerification(ctx, email, s.verificationHash(email, code), expiresAt); err != nil {
-		return nil, err
+		return VerificationDispatchResult{}, err
 	}
 	message := BuildVerificationMessage(code, language)
 	if err := s.sendVerificationEmail(ctx, email, message); err != nil {
 		_ = s.store.DeleteEmailVerification(ctx, email)
 		var configured *Error
 		if errors.As(err, &configured) {
-			return nil, configured
+			return VerificationDispatchResult{}, configured
 		}
-		return nil, authError("验证码邮件发送失败，请检查邮件服务配置后重试", "VERIFICATION_DELIVERY_FAILED", http.StatusServiceUnavailable)
+		return VerificationDispatchResult{}, authError("验证码邮件发送失败，请检查邮件服务配置后重试", "VERIFICATION_DELIVERY_FAILED", http.StatusServiceUnavailable)
 	}
-	return map[string]int{"expiresIn": int(VerificationLifetime.Seconds()), "retryAfter": int(VerificationCooldown.Seconds())}, nil
+	return result, nil
 }
 
 func (s *Service) CreateUserSession(ctx context.Context, response http.ResponseWriter, request *http.Request, user *model.User) error {
@@ -240,6 +258,172 @@ func (s *Service) CreateUserSession(ctx context.Context, response http.ResponseW
 		return err
 	}
 	return s.setSignedCookie(response, request, "mail_session", map[string]any{"sessionId": id, "userId": user.ID, "exp": expires.UnixMilli()}, userLifetime)
+}
+
+func (s *Service) CreateDesktopSession(ctx context.Context, user *model.User, deviceID, deviceName, clientVersion string) (desktopcontract.DesktopSessionResponse, error) {
+	now := time.Now().UTC()
+	sessionID, err := randomToken(24)
+	if err != nil {
+		return desktopcontract.DesktopSessionResponse{}, err
+	}
+	familyID, err := randomToken(24)
+	if err != nil {
+		return desktopcontract.DesktopSessionResponse{}, err
+	}
+	refreshToken, err := randomToken(32)
+	if err != nil {
+		return desktopcontract.DesktopSessionResponse{}, err
+	}
+	absoluteExpiresAt := now.Add(desktopRefreshAbsolute)
+	idleExpiresAt := now.Add(desktopRefreshIdle)
+	session := model.DesktopSession{
+		ID:                sessionID,
+		FamilyID:          familyID,
+		DeviceID:          deviceID,
+		UserID:            user.ID,
+		DeviceName:        deviceName,
+		ClientVersion:     clientVersion,
+		CreatedAt:         now.Format(time.RFC3339Nano),
+		LastUsedAt:        now.Format(time.RFC3339Nano),
+		IdleExpiresAt:     idleExpiresAt.Format(time.RFC3339Nano),
+		AbsoluteExpiresAt: absoluteExpiresAt.Format(time.RFC3339Nano),
+	}
+	if err := s.store.CreateDesktopSession(ctx, session, desktopTokenHash(refreshToken), absoluteExpiresAt); err != nil {
+		return desktopcontract.DesktopSessionResponse{}, err
+	}
+	return s.desktopSessionResult(session, user, refreshToken, now)
+}
+
+func (s *Service) RefreshDesktopSession(ctx context.Context, refreshToken string) (desktopcontract.DesktopSessionResponse, error) {
+	replacement, err := randomToken(32)
+	if err != nil {
+		return desktopcontract.DesktopSessionResponse{}, err
+	}
+	now := time.Now().UTC()
+	session, status, err := s.store.RotateDesktopRefreshToken(
+		ctx,
+		desktopTokenHash(refreshToken),
+		desktopTokenHash(replacement),
+		now,
+		now.Add(desktopRefreshIdle),
+		now.Add(desktopRefreshAbsolute),
+	)
+	if err != nil {
+		return desktopcontract.DesktopSessionResponse{}, err
+	}
+	switch status {
+	case store.DesktopRefreshReplayed:
+		return desktopcontract.DesktopSessionResponse{}, authError("设备登录状态已失效，请重新登录", "DESKTOP_REFRESH_REPLAYED", http.StatusUnauthorized)
+	case store.DesktopRefreshExpired:
+		return desktopcontract.DesktopSessionResponse{}, authError("设备登录状态已过期，请重新登录", "DESKTOP_REFRESH_EXPIRED", http.StatusUnauthorized)
+	case store.DesktopRefreshInvalid:
+		return desktopcontract.DesktopSessionResponse{}, authError("设备登录状态无效，请重新登录", "DESKTOP_REFRESH_INVALID", http.StatusUnauthorized)
+	}
+	user, err := s.store.FindUserByID(ctx, session.UserID)
+	if err != nil {
+		return desktopcontract.DesktopSessionResponse{}, err
+	}
+	if user == nil {
+		return desktopcontract.DesktopSessionResponse{}, authError("设备登录状态无效，请重新登录", "DESKTOP_REFRESH_INVALID", http.StatusUnauthorized)
+	}
+	return s.desktopSessionResult(session, user, replacement, now)
+}
+
+func (s *Service) DesktopIdentity(ctx context.Context, request *http.Request) (*model.Identity, string, error) {
+	authorization := strings.TrimSpace(request.Header.Get("Authorization"))
+	if !strings.HasPrefix(authorization, "Bearer ") {
+		return nil, "", authError("请重新登录", "DESKTOP_ACCESS_REQUIRED", http.StatusUnauthorized)
+	}
+	claims, valid := s.readDesktopAccessToken(strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")))
+	if !valid || claims.ExpiresAt <= time.Now().Unix() {
+		return nil, "", authError("登录状态已过期，请刷新会话", "DESKTOP_ACCESS_EXPIRED", http.StatusUnauthorized)
+	}
+	active, err := s.store.DesktopSessionActive(ctx, claims.SessionID, claims.UserID, time.Now().UTC())
+	if err != nil {
+		return nil, "", err
+	}
+	if !active {
+		return nil, "", authError("设备登录状态已撤销", "DESKTOP_SESSION_REVOKED", http.StatusUnauthorized)
+	}
+	user, err := s.store.FindUserByID(ctx, claims.UserID)
+	if err != nil {
+		return nil, "", err
+	}
+	if user == nil {
+		return nil, "", authError("设备登录状态无效", "DESKTOP_ACCESS_INVALID", http.StatusUnauthorized)
+	}
+	identity := &model.Identity{Kind: "user", OwnerKey: "user:" + strconv.FormatInt(user.ID, 10), UserID: user.ID, Username: user.Username, IsAdmin: user.IsAdmin}
+	return identity, claims.SessionID, nil
+}
+
+func (s *Service) RevokeDesktopSession(ctx context.Context, sessionID string, userID int64) error {
+	return s.store.RevokeDesktopSession(ctx, sessionID, userID, "USER_LOGOUT")
+}
+
+func (s *Service) RevokeDesktopDevice(ctx context.Context, userID int64, deviceID string) error {
+	return s.store.RevokeDesktopDevice(ctx, userID, deviceID, "USER_REVOKED_DEVICE")
+}
+
+func (s *Service) RevokeAllDesktopSessions(ctx context.Context, userID int64) error {
+	return s.store.RevokeAllDesktopSessions(ctx, userID, "USER_REVOKED_ALL_DEVICES")
+}
+
+func (s *Service) ListDesktopDevices(ctx context.Context, userID int64, currentSessionID string) ([]model.DesktopDeviceSummary, error) {
+	return s.store.ListDesktopDevices(ctx, userID, currentSessionID)
+}
+
+func (s *Service) desktopSessionResult(session model.DesktopSession, user *model.User, refreshToken string, now time.Time) (desktopcontract.DesktopSessionResponse, error) {
+	accessToken, err := s.issueDesktopAccessToken(session.ID, user.ID, now.Add(desktopAccessLifetime))
+	if err != nil {
+		return desktopcontract.DesktopSessionResponse{}, err
+	}
+	return desktopcontract.DesktopSessionResponse{
+		AccessToken:      accessToken,
+		RefreshToken:     refreshToken,
+		TokenType:        "Bearer",
+		ExpiresIn:        int(desktopAccessLifetime.Seconds()),
+		RefreshExpiresAt: session.AbsoluteExpiresAt,
+		DeviceId:         session.DeviceID,
+		User: desktopcontract.DesktopSessionUser{
+			Id:            user.ID,
+			Username:      user.Username,
+			Administrator: user.IsAdmin,
+		},
+	}, nil
+}
+
+func (s *Service) issueDesktopAccessToken(sessionID string, userID int64, expiresAt time.Time) (string, error) {
+	claims, err := json.Marshal(desktopAccessClaims{SessionID: sessionID, UserID: userID, ExpiresAt: expiresAt.Unix()})
+	if err != nil {
+		return "", err
+	}
+	payload := base64.RawURLEncoding.EncodeToString(claims)
+	signature := s.sign("desktop-access:" + payload)
+	return "d1." + payload + "." + signature, nil
+}
+
+func (s *Service) readDesktopAccessToken(token string) (desktopAccessClaims, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 || parts[0] != "d1" {
+		return desktopAccessClaims{}, false
+	}
+	if !hmac.Equal([]byte(parts[2]), []byte(s.sign("desktop-access:"+parts[1]))) {
+		return desktopAccessClaims{}, false
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return desktopAccessClaims{}, false
+	}
+	var claims desktopAccessClaims
+	if err := json.Unmarshal(decoded, &claims); err != nil {
+		return desktopAccessClaims{}, false
+	}
+	return claims, claims.SessionID != "" && claims.UserID > 0
+}
+
+func desktopTokenHash(token string) string {
+	digest := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(digest[:])
 }
 
 func (s *Service) CreateGuest(ctx context.Context, response http.ResponseWriter, request *http.Request) (model.Identity, error) {

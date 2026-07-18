@@ -35,12 +35,10 @@ func (s *Server) importAccounts(response http.ResponseWriter, request *http.Requ
 	}
 	parsed := importer.Parse(body.Raw)
 	if len(parsed.Errors) > 0 {
-		writeJSON(response, http.StatusBadRequest, map[string]any{"error": "部分导入行格式不正确", "code": "IMPORT_FORMAT_ERROR", "details": parsed.Errors})
-		return nil
+		return apiFailure(http.StatusBadRequest, "IMPORT_FORMAT_ERROR", "部分导入行格式不正确", parsed.Errors)
 	}
 	if len(parsed.Accounts) == 0 {
-		writeJSON(response, http.StatusBadRequest, map[string]any{"error": "没有可导入的账号"})
-		return nil
+		return apiFailure(http.StatusBadRequest, "IMPORT_EMPTY", "没有可导入的账号", nil)
 	}
 	identity := identityFrom(request)
 	if identity.Kind == "guest" {
@@ -60,8 +58,7 @@ func (s *Server) importAccounts(response http.ResponseWriter, request *http.Requ
 			}
 		}
 		if len(existing)+len(newEmails) > guestAccountLimit {
-			writeJSON(response, http.StatusForbidden, map[string]any{"error": "游客模式最多可保存 3 个邮箱账号", "code": "ACCOUNT_LIMIT_REACHED"})
-			return nil
+			return apiFailure(http.StatusForbidden, "ACCOUNT_LIMIT_REACHED", "游客模式最多可保存 3 个邮箱账号", map[string]any{"limit": guestAccountLimit})
 		}
 	}
 	result, err := s.store.ImportAccounts(request.Context(), identity.OwnerKey, parsed.Accounts, body.Mode)
@@ -91,8 +88,7 @@ func (s *Server) exportAccounts(response http.ResponseWriter, request *http.Requ
 		return err
 	}
 	if len(accounts) != uniqueCount(body.IDs) {
-		writeJSON(response, http.StatusNotFound, map[string]any{"error": "部分邮箱账号不存在"})
-		return nil
+		return apiFailure(http.StatusNotFound, "ACCOUNT_NOT_FOUND", "部分邮箱账号不存在", nil)
 	}
 	response.Header().Set("Cache-Control", "no-store, private")
 	writeJSON(response, http.StatusOK, map[string]any{"filename": "mail.txt", "content": importer.Serialize(accounts)})
@@ -114,8 +110,7 @@ func (s *Server) orderAccounts(response http.ResponseWriter, request *http.Reque
 		return err
 	}
 	if !ok {
-		writeJSON(response, http.StatusBadRequest, map[string]any{"error": "邮箱账号顺序无效"})
-		return nil
+		return apiFailure(http.StatusBadRequest, "ACCOUNT_ORDER_INVALID", "邮箱账号顺序无效", nil)
 	}
 	return s.listAccounts(response, request)
 }
@@ -147,8 +142,7 @@ func (s *Server) updateAccount(response http.ResponseWriter, request *http.Reque
 		return err
 	}
 	if account == nil {
-		writeJSON(response, http.StatusNotFound, map[string]any{"error": "邮箱账号不存在"})
-		return nil
+		return apiFailure(http.StatusNotFound, "ACCOUNT_NOT_FOUND", "邮箱账号不存在", nil)
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"account": account})
 	return nil
@@ -173,8 +167,7 @@ func (s *Server) updateAccountToken(response http.ResponseWriter, request *http.
 		return err
 	}
 	if account == nil {
-		writeJSON(response, http.StatusNotFound, map[string]any{"error": "邮箱账号不存在"})
-		return nil
+		return apiFailure(http.StatusNotFound, "ACCOUNT_NOT_FOUND", "邮箱账号不存在", nil)
 	}
 	writeJSON(response, http.StatusOK, map[string]any{"account": account})
 	return nil
@@ -189,7 +182,10 @@ func (s *Server) deleteAccount(response http.ResponseWriter, request *http.Reque
 	if err != nil {
 		return err
 	}
-	response.WriteHeader(map[bool]int{true: http.StatusNoContent, false: http.StatusNotFound}[deleted])
+	if !deleted {
+		return apiFailure(http.StatusNotFound, "ACCOUNT_NOT_FOUND", "邮箱账号不存在", nil)
+	}
+	response.WriteHeader(http.StatusNoContent)
 	return nil
 }
 
@@ -210,8 +206,7 @@ func (s *Server) groupAccounts(response http.ResponseWriter, request *http.Reque
 		return err
 	}
 	if !ok {
-		writeJSON(response, http.StatusNotFound, map[string]any{"error": "部分邮箱账号不存在"})
-		return nil
+		return apiFailure(http.StatusNotFound, "ACCOUNT_NOT_FOUND", "部分邮箱账号不存在", nil)
 	}
 	return s.listAccounts(response, request)
 }
@@ -231,8 +226,7 @@ func (s *Server) deleteAccounts(response http.ResponseWriter, request *http.Requ
 		return err
 	}
 	if deleted == nil {
-		writeJSON(response, http.StatusNotFound, map[string]any{"error": "部分邮箱账号不存在"})
-		return nil
+		return apiFailure(http.StatusNotFound, "ACCOUNT_NOT_FOUND", "部分邮箱账号不存在", nil)
 	}
 	accounts, err := s.store.ListAccounts(request.Context(), identityFrom(request).OwnerKey)
 	if err != nil {

@@ -11,6 +11,12 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@aillive/api-types": ["packages/api-types/src/index.ts"],
+      "@aillive/mail-ui": ["packages/mail-ui/src/index.ts"],
+      "@aillive/mail-ui/routes": ["packages/mail-ui/src/routes.ts"]
+    },
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,

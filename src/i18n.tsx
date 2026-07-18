@@ -3,6 +3,12 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 export type Language = "zh" | "en";
 
 const english: Record<string, string> = {
+  "下载客户端": "Download",
+  "Mail 桌面客户端": "Mail for Windows",
+  "Windows 安装版": "Windows installer",
+  "Windows 便携版": "Windows portable",
+  "EXE · 免安装": "EXE · no install",
+  "推荐": "Recommended",
   "写邮件": "Compose",
   "返回收件箱": "Back to inbox",
   "草稿已自动保存": "Draft autosaved",

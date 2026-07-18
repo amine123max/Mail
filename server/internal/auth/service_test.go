@@ -92,13 +92,37 @@ func TestVerificationConfigurationErrorContract(t *testing.T) {
 	}
 }
 
+func TestVerificationRequestDoesNotRevealAccountExistence(t *testing.T) {
+	service, _ := openAuthTestService(t, nil)
+	if _, err := service.BootstrapAdministrator(context.Background(), "admin", "admin@example.com", "AdminPassword!123"); err != nil {
+		t.Fatal(err)
+	}
+	unknownReset, err := service.RequestRegistrationCode(context.Background(), "missing@example.com", "reset", "en")
+	if err != nil || !unknownReset.Suppressed || unknownReset.RetryAfter != int(VerificationCooldown.Seconds()) {
+		t.Fatalf("unknown reset request leaked account state: result=%#v err=%v", unknownReset, err)
+	}
+	existingRegister, err := service.RequestRegistrationCode(context.Background(), "admin@example.com", "register", "en")
+	if err != nil || !existingRegister.Suppressed || existingRegister.ExpiresIn != int(VerificationLifetime.Seconds()) {
+		t.Fatalf("existing registration request leaked account state: result=%#v err=%v", existingRegister, err)
+	}
+}
+
 func TestResetPasswordWithEmailVerificationCode(t *testing.T) {
 	service, storage := openAuthTestService(t, nil)
 	const email = "admin@example.com"
 	const oldPassword = "AdminPassword!123"
 	const newPassword = "ChangedPassword!456"
-	if _, err := service.BootstrapAdministrator(context.Background(), "admin", email, oldPassword); err != nil {
+	user, err := service.BootstrapAdministrator(context.Background(), "admin", email, oldPassword)
+	if err != nil {
 		t.Fatal(err)
+	}
+	desktopSession, err := service.CreateDesktopSession(context.Background(), user, "password-reset-device", "Password reset test", "1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims, valid := service.readDesktopAccessToken(desktopSession.AccessToken)
+	if !valid {
+		t.Fatal("desktop access token was invalid before password reset")
 	}
 	const code = "123456"
 	if err := storage.SaveEmailVerification(context.Background(), email, service.verificationHash(email, code), time.Now().Add(VerificationLifetime)); err != nil {
@@ -112,5 +136,12 @@ func TestResetPasswordWithEmailVerificationCode(t *testing.T) {
 	}
 	if user, err := service.Authenticate(context.Background(), email, newPassword); err != nil || user == nil {
 		t.Fatalf("new password was rejected: user=%v err=%v", user, err)
+	}
+	active, err := storage.DesktopSessionActive(context.Background(), claims.SessionID, claims.UserID, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active {
+		t.Fatal("password reset did not revoke the desktop session")
 	}
 }
