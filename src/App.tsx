@@ -99,9 +99,9 @@ const brandLogoUrl = `${import.meta.env.BASE_URL}paper-plane-logo.png`;
 const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 const desktopReleaseBaseUrl = `https://github.com/amine123max/Mail/releases/download/v${versionInfo.version}`;
 const desktopDownloads = [
-  { title: "Windows 安装版", detail: "EXE · x64", filename: `AilliveMail_${versionInfo.version}_x64-setup.exe`, recommended: true },
-  { title: "Windows MSI", detail: "MSI · x64", filename: `AilliveMail_${versionInfo.version}_x64_zh-CN.msi`, recommended: false },
-  { title: "Windows 便携版", detail: "EXE · 免安装", filename: "AilliveMail.exe", recommended: false },
+  { title: "Windows 安装版", format: "EXE", filename: `AilliveMail_${versionInfo.version}_x64-setup.exe`, recommended: true },
+  { title: "Windows MSI", format: "MSI", filename: `AilliveMail_${versionInfo.version}_x64_zh-CN.msi`, recommended: false },
+  { title: "Windows 便携版", format: "EXE", filename: "AilliveMail.exe", recommended: false },
 ] as const;
 const avatarGradients = [
   "linear-gradient(145deg, #7c3aed, #3b0764)",
@@ -1027,11 +1027,8 @@ function LoginPage({ setupRequired, dark, setDark, onLogin, onGuest }: { setupRe
       <div className="login-actions">
         <div ref={downloadMenuRef} className={`login-download ${downloadOpen ? "open" : ""}`}>
           <button className="login-download-trigger" type="button" aria-haspopup="menu" aria-expanded={downloadOpen} onClick={() => setDownloadOpen((open) => !open)}><Download size={15} /><span>{t("下载客户端")}</span><ChevronDown size={13} /></button>
-          {downloadOpen && <div className="login-download-popover" role="menu">
-            <header><div><strong>{t("Mail 桌面客户端")}</strong><span>v{versionInfo.version}</span></div><small>Windows x64</small></header>
-            <div className="login-download-list">
-              {desktopDownloads.map((item) => <a key={item.filename} role="menuitem" href={`${desktopReleaseBaseUrl}/${item.filename}`} onClick={() => setDownloadOpen(false)}><span className="login-download-item-icon"><Download size={14} /></span><span><strong>{t(item.title)}</strong><small>{t(item.detail)}</small></span>{item.recommended && <em>{t("推荐")}</em>}</a>)}
-            </div>
+          {downloadOpen && <div className="login-download-popover" role="menu" aria-label={t("下载客户端")}>
+            {desktopDownloads.map((item) => <a key={item.filename} className={item.recommended ? "recommended" : ""} role="menuitem" href={`${desktopReleaseBaseUrl}/${item.filename}`} onClick={() => setDownloadOpen(false)}><Download size={15} /><strong>{t(item.title)}</strong><small>{item.recommended ? t("推荐") : item.format}</small></a>)}
           </div>}
         </div>
         <button className="language-toggle" onClick={() => setLanguage(language === "zh" ? "en" : "zh")} aria-label={t("界面语言")}><Languages size={15} /> {language === "zh" ? "EN" : "中文"}</button>

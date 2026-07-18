@@ -760,19 +760,14 @@ button { color: inherit; }
 .login-download-trigger:hover, .login-download.open .login-download-trigger { background: var(--surface-soft); }
 .login-download-trigger svg:last-child { color: var(--muted); transition: transform .16s ease; }
 .login-download.open .login-download-trigger svg:last-child { transform: rotate(180deg); }
-.login-download-popover { position: absolute; top: calc(100% + 8px); right: 0; width: 282px; padding: 8px; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); box-shadow: 0 18px 50px rgba(19, 24, 35, .14); animation: menu-pop .16s ease both; }
-.login-download-popover header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 8px 9px 10px; border-bottom: 1px solid var(--border); text-align: left; }
-.login-download-popover header div { display: grid; gap: 2px; }
-.login-download-popover header strong { color: var(--foreground); font-size: 11px; }
-.login-download-popover header span, .login-download-popover header small { color: var(--muted); font-size: 9px; font-weight: 500; }
-.login-download-list { display: grid; gap: 2px; padding-top: 6px; }
-.login-download-list > a { min-height: 48px; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 8px; color: inherit; text-decoration: none; text-align: left; }
-.login-download-list > a:hover { background: var(--surface-soft); }
-.login-download-item-icon { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 8px; color: var(--foreground); background: var(--surface); }
-.login-download-list > a > span:nth-child(2) { min-width: 0; display: grid; gap: 3px; }
-.login-download-list strong { color: var(--foreground); font-size: 10px; }
-.login-download-list small { color: var(--muted); font-size: 8px; }
-.login-download-list em { padding: 3px 6px; border-radius: 999px; color: #17663f; background: rgba(48, 164, 108, .1); font-size: 8px; font-style: normal; font-weight: 700; }
+.login-download-popover { position: absolute; top: calc(100% + 7px); right: 0; width: min(236px, calc(100vw - 36px)); display: grid; gap: 2px; padding: 6px; border: 1px solid color-mix(in srgb, var(--border) 82%, transparent); border-radius: 10px; background: var(--surface); box-shadow: 0 16px 42px rgba(19, 24, 35, .13); animation: menu-pop .16s ease both; }
+.login-download-popover > a { min-height: 42px; display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 0 9px; border-radius: 7px; color: var(--foreground); text-decoration: none; text-align: left; }
+.login-download-popover > a:hover { background: var(--surface-soft); }
+.login-download-popover > a > svg { color: var(--muted); }
+.login-download-popover > a:hover > svg, .login-download-popover > a.recommended > svg { color: var(--foreground); }
+.login-download-popover strong { min-width: 0; overflow: hidden; font-size: 10px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.login-download-popover small { color: var(--muted); font-size: 8px; font-weight: 600; letter-spacing: .02em; }
+.login-download-popover > a.recommended small { padding: 3px 6px; border-radius: 999px; color: #17663f; background: rgba(48, 164, 108, .1); }
 .login-card { position: relative; z-index: 1; width: min(460px, 100%); padding: 0; border: 0; background: transparent; text-align: center; }
 .login-card .eyebrow { margin-bottom: 17px; }
 .login-card h1 { margin: 0 0 38px; font: 400 clamp(46px, 7vw, 70px)/1.04 Georgia, "Times New Roman", serif; letter-spacing: -.045em; }
@@ -872,7 +867,7 @@ button { color: inherit; }
 @media (max-width: 520px) {
   .login-page { padding: 200px 18px 48px; }
   .login-actions { right: 18px; }
-  .login-download-popover { position: fixed; top: 64px; right: 18px; left: 18px; width: auto; }
+  .login-download-popover { right: 0; }
   .verification-control { grid-template-columns: minmax(0, 1fr) 108px; }
 }
 
