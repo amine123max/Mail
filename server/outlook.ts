@@ -369,7 +369,10 @@ export async function validateRemoteImageUrl(value: string): Promise<URL> {
   if (url.port && !["80", "443"].includes(url.port)) {
     throw new Error("Unsupported remote image port");
   }
-  const hostname = url.hostname.toLowerCase();
+  // WHATWG URL keeps brackets around IPv6 literals in some Node/platform
+  // combinations. Normalize them before net.isIP/dns checks so ::1 and other
+  // private IPv6 ranges are rejected consistently in Linux CI and Windows.
+  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
   if (hostname === "localhost" || hostname.endsWith(".local") || hostname.endsWith(".internal")) {
     throw new Error("Private remote image host");
   }
