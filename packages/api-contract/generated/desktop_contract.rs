@@ -114,3 +114,68 @@ pub(crate) struct DesktopDeviceSummary {
 pub(crate) struct DesktopDeviceListResponse {
     pub(crate) devices: Vec<DesktopDeviceSummary>,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopSyncProviderRef {
+    pub(crate) graph_id: Option<String>,
+    pub(crate) delta_scope: Option<String>,
+    pub(crate) folder: Option<String>,
+    pub(crate) uid_validity: Option<i64>,
+    pub(crate) uid: Option<i64>,
+    pub(crate) mod_sequence: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopSyncChange {
+    pub(crate) id: String,
+    pub(crate) kind: String,
+    pub(crate) change_type: String,
+    pub(crate) provider: String,
+    pub(crate) folder: String,
+    pub(crate) previous_folder: Option<String>,
+    pub(crate) provider_ref: DesktopSyncProviderRef,
+    pub(crate) body_version: Option<String>,
+    pub(crate) payload: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopSyncChangesResponse {
+    pub(crate) upserts: Vec<DesktopSyncChange>,
+    pub(crate) deleted_ids: Vec<String>,
+    pub(crate) next_cursor: String,
+    pub(crate) has_more: bool,
+    pub(crate) unread_count: i32,
+    pub(crate) server_time: String,
+    pub(crate) cursor_reset_required: bool,
+    pub(crate) error_code: Option<String>,
+    pub(crate) provider: String,
+    pub(crate) last_sync_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopUnreadFolderSummary {
+    pub(crate) folder: String,
+    pub(crate) unread_count: i32,
+    pub(crate) total_count: i32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopUnreadAccountSummary {
+    pub(crate) account_id: i64,
+    pub(crate) provider: String,
+    pub(crate) unread_count: i32,
+    pub(crate) folders: Vec<DesktopUnreadFolderSummary>,
+    pub(crate) error_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DesktopUnreadSummaryResponse {
+    pub(crate) accounts: Vec<DesktopUnreadAccountSummary>,
+    pub(crate) server_time: String,
+}

@@ -10,9 +10,12 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/amine123max/Mail/server/internal/desktopcontract"
 	"github.com/amine123max/Mail/server/internal/model"
 	"github.com/microcosm-cc/bluemonday"
 )
@@ -28,6 +31,7 @@ type graphRecipient struct {
 
 type graphMessage struct {
 	ID               string           `json:"id"`
+	ParentFolderID   string           `json:"parentFolderId"`
 	Subject          string           `json:"subject"`
 	Sender           graphRecipient   `json:"sender"`
 	From             graphRecipient   `json:"from"`
@@ -38,7 +42,11 @@ type graphMessage struct {
 	IsRead           bool             `json:"isRead"`
 	HasAttachments   bool             `json:"hasAttachments"`
 	BodyPreview      string           `json:"bodyPreview"`
-	Body             struct {
+	LastModifiedDate string           `json:"lastModifiedDateTime"`
+	Removed          *struct {
+		Reason string `json:"reason"`
+	} `json:"@removed"`
+	Body struct {
 		ContentType string `json:"contentType"`
 		Content     string `json:"content"`
 	} `json:"body"`
@@ -48,9 +56,18 @@ type graphMessage struct {
 }
 
 type graphCollection[T any] struct {
-	Value    []T    `json:"value"`
-	Count    int    `json:"@odata.count"`
-	NextLink string `json:"@odata.nextLink"`
+	Value     []T    `json:"value"`
+	Count     int    `json:"@odata.count"`
+	NextLink  string `json:"@odata.nextLink"`
+	DeltaLink string `json:"@odata.deltaLink"`
+}
+
+type graphFolderStatus struct {
+	ID              string `json:"id"`
+	DisplayName     string `json:"displayName"`
+	WellKnownName   string `json:"wellKnownName"`
+	UnreadItemCount int    `json:"unreadItemCount"`
+	TotalItemCount  int    `json:"totalItemCount"`
 }
 
 type graphAttachment struct {
@@ -71,6 +88,14 @@ var graphFolders = []Folder{
 }
 
 func (s *Service) graphRequest(ctx context.Context, accessToken, method, resource string, input, output any) error {
+	endpoint, err := graphResourceURL(resource)
+	if err != nil {
+		return err
+	}
+	return s.graphRequestURL(ctx, accessToken, method, endpoint, input, output)
+}
+
+func (s *Service) graphRequestURL(ctx context.Context, accessToken, method, endpoint string, input, output any) error {
 	var body io.Reader
 	if input != nil {
 		encoded, err := json.Marshal(input)
@@ -79,7 +104,7 @@ func (s *Service) graphRequest(ctx context.Context, accessToken, method, resourc
 		}
 		body = bytes.NewReader(encoded)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, "https://graph.microsoft.com/v1.0/me/"+resource, body)
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
 		return err
 	}
@@ -91,7 +116,7 @@ func (s *Service) graphRequest(ctx context.Context, accessToken, method, resourc
 	}
 	response, err := s.httpClient.Do(request)
 	if err != nil {
-		return serviceError("Microsoft Graph 请求失败："+err.Error(), "GRAPH_REQUEST_FAILED", http.StatusBadGateway)
+		return serviceError("Microsoft Graph 请求失败："+err.Error(), "GRAPH_TEMPORARY_NETWORK", http.StatusBadGateway)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -110,20 +135,8 @@ func (s *Service) graphRequest(ctx context.Context, accessToken, method, resourc
 		if detail == "" {
 			detail = fmt.Sprintf("HTTP %d", response.StatusCode)
 		}
-		status := http.StatusBadGateway
-		switch response.StatusCode {
-		case http.StatusBadRequest:
-			status = http.StatusBadRequest
-		case http.StatusUnauthorized:
-			status = http.StatusUnauthorized
-		case http.StatusForbidden:
-			status = http.StatusForbidden
-		case http.StatusNotFound:
-			status = http.StatusNotFound
-		case http.StatusTooManyRequests:
-			status = http.StatusTooManyRequests
-		}
-		return serviceError("Microsoft Graph 请求失败："+detail, "GRAPH_REQUEST_FAILED", status)
+		code, status := graphFailure(response.StatusCode, graphError.Error.Code)
+		return serviceErrorWithRetry("Microsoft Graph 请求失败："+detail, code, status, retryAfterSeconds(response.Header.Get("Retry-After")))
 	}
 	if output != nil && response.StatusCode != http.StatusNoContent {
 		if err := json.NewDecoder(io.LimitReader(response.Body, 40<<20)).Decode(output); err != nil {
@@ -131,6 +144,48 @@ func (s *Service) graphRequest(ctx context.Context, accessToken, method, resourc
 		}
 	}
 	return nil
+}
+
+func graphResourceURL(resource string) (string, error) {
+	if strings.HasPrefix(resource, "https://") {
+		parsed, err := url.Parse(resource)
+		if err != nil || !strings.EqualFold(parsed.Scheme, "https") || !strings.EqualFold(parsed.Hostname(), "graph.microsoft.com") || !strings.HasPrefix(parsed.EscapedPath(), "/v1.0/") {
+			return "", serviceError("Microsoft Graph 游标地址无效", "GRAPH_CURSOR_INVALID", http.StatusConflict)
+		}
+		return parsed.String(), nil
+	}
+	if strings.Contains(resource, "\\") || strings.Contains(resource, "..") {
+		return "", serviceError("Microsoft Graph 请求地址无效", "GRAPH_REQUEST_INVALID", http.StatusBadRequest)
+	}
+	return "https://graph.microsoft.com/v1.0/me/" + strings.TrimPrefix(resource, "/"), nil
+}
+
+func graphFailure(status int, code string) (string, int) {
+	normalized := strings.ToLower(strings.TrimSpace(code))
+	if status == http.StatusGone || strings.Contains(normalized, "syncstatenotfound") || strings.Contains(normalized, "resyncrequired") || strings.Contains(normalized, "invaliddeltatoken") {
+		return "GRAPH_CURSOR_INVALID", http.StatusConflict
+	}
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return "MAIL_AUTH_REQUIRED", http.StatusUnauthorized
+	case http.StatusNotFound:
+		return "GRAPH_FOLDER_NOT_FOUND", http.StatusNotFound
+	case http.StatusTooManyRequests:
+		return "GRAPH_RATE_LIMITED", http.StatusTooManyRequests
+	default:
+		if status >= 500 {
+			return "GRAPH_TEMPORARY_NETWORK", http.StatusBadGateway
+		}
+		return "GRAPH_REQUEST_INVALID", http.StatusBadRequest
+	}
+}
+
+func retryAfterSeconds(value string) *int {
+	seconds, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil || seconds < 0 || seconds > 86400 {
+		return nil
+	}
+	return &seconds
 }
 
 func (s *Service) graphFolders(ctx context.Context, account *model.AccountCredentials, accessToken string) ([]Folder, error) {
@@ -187,6 +242,175 @@ func (s *Service) graphListMessages(ctx context.Context, account *model.AccountC
 	}
 	_ = s.store.MarkAccountSynced(ctx, account.OwnerKey, account.ID)
 	return map[string]any{"messages": messages, "total": total, "page": page, "transport": "graph"}, nil
+}
+
+func (s *Service) syncGraphChanges(ctx context.Context, account *model.AccountCredentials, folder string, state graphSyncState, limit int) (syncProviderBatch, graphSyncState, error) {
+	token, err := s.RefreshAccessToken(ctx, account, graphReadScope)
+	if err != nil {
+		return syncProviderBatch{}, state, err
+	}
+	return s.graphChanges(ctx, token.AccessToken, folder, state, limit)
+}
+
+func (s *Service) graphChanges(ctx context.Context, accessToken, folder string, state graphSyncState, limit int) (syncProviderBatch, graphSyncState, error) {
+	folderID := graphFolder(folder)
+	canonicalFolder := "graph:" + folderID
+	resource := state.Link
+	if resource == "" {
+		parameters := url.Values{
+			"$top":    {fmt.Sprint(limit)},
+			"$select": {"id,parentFolderId,subject,sender,from,toRecipients,receivedDateTime,sentDateTime,isRead,flag,bodyPreview,lastModifiedDateTime"},
+		}
+		resource = "mailFolders/" + url.PathEscape(folderID) + "/messages/delta?" + parameters.Encode()
+	}
+	var collection graphCollection[graphMessage]
+	if err := s.graphRequest(ctx, accessToken, http.MethodGet, resource, nil, &collection); err != nil {
+		return syncProviderBatch{}, state, err
+	}
+	status, err := s.graphFolderStatus(ctx, accessToken, folderID)
+	if err != nil {
+		return syncProviderBatch{}, state, err
+	}
+	upserts := make([]desktopcontract.DesktopSyncChange, 0, len(collection.Value)+1)
+	deleted := make([]string, 0)
+	folderChange := graphFolderChange(canonicalFolder, status)
+	folderFingerprint := syncChangeFingerprint(folderChange)
+	if state.FolderFingerprint != folderFingerprint {
+		upserts = append(upserts, folderChange)
+	}
+	state.FolderFingerprint = folderFingerprint
+	for _, message := range collection.Value {
+		if strings.TrimSpace(message.ID) == "" {
+			continue
+		}
+		if message.Removed != nil {
+			deleted = append(deleted, "graph:"+message.ID)
+			continue
+		}
+		upserts = append(upserts, graphMessageChange(canonicalFolder, message))
+	}
+	nextLink := collection.DeltaLink
+	hasMore := collection.NextLink != ""
+	if hasMore {
+		nextLink = collection.NextLink
+	}
+	if nextLink == "" {
+		return syncProviderBatch{}, state, serviceError("Microsoft Graph 未返回增量游标", "GRAPH_CURSOR_INVALID", http.StatusConflict)
+	}
+	state.Link = nextLink
+	return syncProviderBatch{
+		Upserts:     upserts,
+		DeletedIDs:  deleted,
+		UnreadCount: status.UnreadItemCount,
+		HasMore:     hasMore,
+	}, state, nil
+}
+
+func (s *Service) graphFolderStatus(ctx context.Context, accessToken, folderID string) (graphFolderStatus, error) {
+	var status graphFolderStatus
+	resource := "mailFolders/" + url.PathEscape(folderID) + "?$select=id,displayName,wellKnownName,unreadItemCount,totalItemCount"
+	if err := s.graphRequest(ctx, accessToken, http.MethodGet, resource, nil, &status); err != nil {
+		return graphFolderStatus{}, err
+	}
+	if status.ID == "" {
+		status.ID = folderID
+	}
+	return status, nil
+}
+
+func graphFolderChange(folder string, status graphFolderStatus) desktopcontract.DesktopSyncChange {
+	graphID := status.ID
+	deltaScope := folder
+	return desktopcontract.DesktopSyncChange{
+		Id:         "graph:folder:" + status.ID,
+		Kind:       "folder",
+		ChangeType: "upsert",
+		Provider:   "graph",
+		Folder:     folder,
+		ProviderRef: desktopcontract.DesktopSyncProviderRef{
+			GraphId:    &graphID,
+			DeltaScope: &deltaScope,
+		},
+		Payload: map[string]any{
+			"path":        folder,
+			"name":        status.DisplayName,
+			"unreadCount": status.UnreadItemCount,
+			"totalCount":  status.TotalItemCount,
+		},
+	}
+}
+
+func graphMessageChange(folder string, message graphMessage) desktopcontract.DesktopSyncChange {
+	from := message.Sender.EmailAddress
+	if from.Address == "" {
+		from = message.From.EmailAddress
+	}
+	date := message.ReceivedDateTime
+	if date == "" {
+		date = message.SentDateTime
+	}
+	graphID := message.ID
+	deltaScope := folder
+	var bodyVersion *string
+	if message.LastModifiedDate != "" {
+		bodyVersion = &message.LastModifiedDate
+	}
+	uid := "graph:" + message.ID
+	return desktopcontract.DesktopSyncChange{
+		Id:         uid,
+		Kind:       "message",
+		ChangeType: "upsert",
+		Provider:   "graph",
+		Folder:     folder,
+		ProviderRef: desktopcontract.DesktopSyncProviderRef{
+			GraphId:    &graphID,
+			DeltaScope: &deltaScope,
+		},
+		BodyVersion: bodyVersion,
+		Payload: map[string]any{
+			"uid":            uid,
+			"subject":        fallbackSubject(message.Subject),
+			"from":           formatGraphAddress(from),
+			"fromEmail":      from.Address,
+			"to":             formatGraphRecipients(message.ToRecipients),
+			"date":           isoDate(date),
+			"unread":         !message.IsRead,
+			"flagged":        strings.EqualFold(message.Flag.FlagStatus, "flagged"),
+			"preview":        previewText(message.BodyPreview),
+			"hasAttachments": message.HasAttachments,
+			"bodyVersion":    message.LastModifiedDate,
+			"parentFolderId": message.ParentFolderID,
+		},
+	}
+}
+
+func (s *Service) graphUnreadSummary(ctx context.Context, account *model.AccountCredentials) ([]desktopcontract.DesktopUnreadFolderSummary, error) {
+	token, err := s.RefreshAccessToken(ctx, account, graphReadScope)
+	if err != nil {
+		return nil, err
+	}
+	resource := "mailFolders?$top=200&$select=id,displayName,wellKnownName,unreadItemCount,totalItemCount"
+	folders := make([]desktopcontract.DesktopUnreadFolderSummary, 0)
+	for pages := 0; pages < 10 && resource != ""; pages++ {
+		var collection graphCollection[graphFolderStatus]
+		if err := s.graphRequest(ctx, token.AccessToken, http.MethodGet, resource, nil, &collection); err != nil {
+			return nil, err
+		}
+		for _, folder := range collection.Value {
+			path := folder.WellKnownName
+			if path == "" {
+				path = folder.ID
+			}
+			folders = append(folders, desktopcontract.DesktopUnreadFolderSummary{
+				Folder:      "graph:" + strings.ToLower(path),
+				UnreadCount: folder.UnreadItemCount,
+				TotalCount:  folder.TotalItemCount,
+			})
+		}
+		resource = collection.NextLink
+	}
+	sort.Slice(folders, func(i, j int) bool { return folders[i].Folder < folders[j].Folder })
+	return folders, nil
 }
 
 func (s *Service) graphGetMessage(ctx context.Context, account *model.AccountCredentials, accessToken, uid string) (MessageDetail, error) {

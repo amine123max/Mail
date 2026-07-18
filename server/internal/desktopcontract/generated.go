@@ -87,3 +87,56 @@ type DesktopDeviceSummary struct {
 type DesktopDeviceListResponse struct {
 	Devices []DesktopDeviceSummary `json:"devices"`
 }
+
+type DesktopSyncProviderRef struct {
+	GraphId     *string `json:"graphId"`
+	DeltaScope  *string `json:"deltaScope"`
+	Folder      *string `json:"folder"`
+	UidValidity *int64  `json:"uidValidity"`
+	Uid         *int64  `json:"uid"`
+	ModSequence *int64  `json:"modSequence"`
+}
+
+type DesktopSyncChange struct {
+	Id             string                 `json:"id"`
+	Kind           string                 `json:"kind"`
+	ChangeType     string                 `json:"changeType"`
+	Provider       string                 `json:"provider"`
+	Folder         string                 `json:"folder"`
+	PreviousFolder *string                `json:"previousFolder"`
+	ProviderRef    DesktopSyncProviderRef `json:"providerRef"`
+	BodyVersion    *string                `json:"bodyVersion"`
+	Payload        map[string]any         `json:"payload"`
+}
+
+type DesktopSyncChangesResponse struct {
+	Upserts             []DesktopSyncChange `json:"upserts"`
+	DeletedIds          []string            `json:"deletedIds"`
+	NextCursor          string              `json:"nextCursor"`
+	HasMore             bool                `json:"hasMore"`
+	UnreadCount         int                 `json:"unreadCount"`
+	ServerTime          string              `json:"serverTime"`
+	CursorResetRequired bool                `json:"cursorResetRequired"`
+	ErrorCode           *string             `json:"errorCode"`
+	Provider            string              `json:"provider"`
+	LastSyncAt          *string             `json:"lastSyncAt"`
+}
+
+type DesktopUnreadFolderSummary struct {
+	Folder      string `json:"folder"`
+	UnreadCount int    `json:"unreadCount"`
+	TotalCount  int    `json:"totalCount"`
+}
+
+type DesktopUnreadAccountSummary struct {
+	AccountId   int64                        `json:"accountId"`
+	Provider    string                       `json:"provider"`
+	UnreadCount int                          `json:"unreadCount"`
+	Folders     []DesktopUnreadFolderSummary `json:"folders"`
+	ErrorCode   *string                      `json:"errorCode"`
+}
+
+type DesktopUnreadSummaryResponse struct {
+	Accounts   []DesktopUnreadAccountSummary `json:"accounts"`
+	ServerTime string                        `json:"serverTime"`
+}

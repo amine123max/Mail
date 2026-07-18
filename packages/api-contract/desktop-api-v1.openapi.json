@@ -103,9 +103,115 @@
           "204": { "description": "All devices revoked" }
         }
       }
+    },
+    "/api/v1/desktop/accounts/{id}/folders/{folder}/changes": {
+      "get": {
+        "security": [{ "DesktopBearer": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" } },
+          { "name": "folder", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Unified Graph or IMAP changes",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" },
+              "X-Aillive-Next-Cursor": { "$ref": "#/components/headers/DesktopNextCursor" },
+              "X-Aillive-Last-Sync-At": { "$ref": "#/components/headers/DesktopLastSyncAt" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DesktopSyncChangesResponse" }
+              }
+            }
+          },
+          "304": {
+            "description": "No mailbox state change. The client must still advance to X-Aillive-Next-Cursor.",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" },
+              "X-Aillive-Next-Cursor": { "$ref": "#/components/headers/DesktopNextCursor" },
+              "X-Aillive-Last-Sync-At": { "$ref": "#/components/headers/DesktopLastSyncAt" }
+            }
+          },
+          "400": { "$ref": "#/components/responses/DesktopApiError" },
+          "401": { "$ref": "#/components/responses/DesktopApiError" },
+          "404": { "$ref": "#/components/responses/DesktopApiError" },
+          "409": { "$ref": "#/components/responses/DesktopApiError" },
+          "429": { "$ref": "#/components/responses/DesktopApiError" },
+          "502": { "$ref": "#/components/responses/DesktopApiError" },
+          "504": { "$ref": "#/components/responses/DesktopApiError" }
+        }
+      }
+    },
+    "/api/v1/desktop/unread-summary": {
+      "get": {
+        "security": [{ "DesktopBearer": [] }],
+        "responses": {
+          "200": {
+            "description": "Unread counts for every account and folder",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/DesktopUnreadSummaryResponse" }
+              }
+            }
+          },
+          "304": {
+            "description": "Unread counts are unchanged.",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ETag" }
+            }
+          },
+          "401": { "$ref": "#/components/responses/DesktopApiError" },
+          "429": { "$ref": "#/components/responses/DesktopApiError" },
+          "502": { "$ref": "#/components/responses/DesktopApiError" },
+          "504": { "$ref": "#/components/responses/DesktopApiError" }
+        }
+      }
     }
   },
   "components": {
+    "securitySchemes": {
+      "DesktopBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Aillive desktop access token"
+      }
+    },
+    "headers": {
+      "ETag": {
+        "description": "Strong validator for the mailbox or unread state represented by the response.",
+        "schema": { "type": "string" }
+      },
+      "DesktopNextCursor": {
+        "description": "Opaque cursor to persist after both 200 and 304 responses.",
+        "schema": { "type": "string" }
+      },
+      "DesktopLastSyncAt": {
+        "description": "RFC 3339 timestamp set only after the final page commits successfully.",
+        "schema": { "type": "string" }
+      }
+    },
+    "responses": {
+      "DesktopApiError": {
+        "description": "Stable desktop API error",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds before retrying when present.",
+            "schema": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/DesktopApiError" }
+          }
+        }
+      }
+    },
     "schemas": {
       "DesktopApiError": {
         "type": "object",
@@ -242,6 +348,83 @@
             "type": "array",
             "items": { "$ref": "#/components/schemas/DesktopDeviceSummary" }
           }
+        }
+      },
+      "DesktopSyncProviderRef": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["graphId", "deltaScope", "folder", "uidValidity", "uid", "modSequence"],
+        "properties": {
+          "graphId": { "type": ["string", "null"] },
+          "deltaScope": { "type": ["string", "null"] },
+          "folder": { "type": ["string", "null"] },
+          "uidValidity": { "type": ["integer", "null"], "format": "int64" },
+          "uid": { "type": ["integer", "null"], "format": "int64" },
+          "modSequence": { "type": ["integer", "null"], "format": "int64" }
+        }
+      },
+      "DesktopSyncChange": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "changeType", "provider", "folder", "previousFolder", "providerRef", "bodyVersion", "payload"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "type": "string" },
+          "changeType": { "type": "string" },
+          "provider": { "type": "string" },
+          "folder": { "type": "string" },
+          "previousFolder": { "type": ["string", "null"] },
+          "providerRef": { "$ref": "#/components/schemas/DesktopSyncProviderRef" },
+          "bodyVersion": { "type": ["string", "null"] },
+          "payload": { "type": "object", "additionalProperties": {} }
+        }
+      },
+      "DesktopSyncChangesResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["upserts", "deletedIds", "nextCursor", "hasMore", "unreadCount", "serverTime", "cursorResetRequired", "errorCode", "provider", "lastSyncAt"],
+        "properties": {
+          "upserts": { "type": "array", "items": { "$ref": "#/components/schemas/DesktopSyncChange" } },
+          "deletedIds": { "type": "array", "items": { "type": "string" } },
+          "nextCursor": { "type": "string" },
+          "hasMore": { "type": "boolean" },
+          "unreadCount": { "type": "integer" },
+          "serverTime": { "type": "string" },
+          "cursorResetRequired": { "type": "boolean" },
+          "errorCode": { "type": ["string", "null"] },
+          "provider": { "type": "string" },
+          "lastSyncAt": { "type": ["string", "null"] }
+        }
+      },
+      "DesktopUnreadFolderSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["folder", "unreadCount", "totalCount"],
+        "properties": {
+          "folder": { "type": "string" },
+          "unreadCount": { "type": "integer" },
+          "totalCount": { "type": "integer" }
+        }
+      },
+      "DesktopUnreadAccountSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["accountId", "provider", "unreadCount", "folders", "errorCode"],
+        "properties": {
+          "accountId": { "type": "integer", "format": "int64" },
+          "provider": { "type": "string" },
+          "unreadCount": { "type": "integer" },
+          "folders": { "type": "array", "items": { "$ref": "#/components/schemas/DesktopUnreadFolderSummary" } },
+          "errorCode": { "type": ["string", "null"] }
+        }
+      },
+      "DesktopUnreadSummaryResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["accounts", "serverTime"],
+        "properties": {
+          "accounts": { "type": "array", "items": { "$ref": "#/components/schemas/DesktopUnreadAccountSummary" } },
+          "serverTime": { "type": "string" }
         }
       }
     }

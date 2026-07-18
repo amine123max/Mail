@@ -29,6 +29,7 @@ func (client *xoauth2SASL) Next(_ []byte) ([]byte, error) { return []byte{}, nil
 
 func (s *Service) connectIMAP(ctx context.Context, account *model.AccountCredentials, accessToken string) (*client.Client, error) {
 	var lastError error
+	authenticationFailed := false
 	for _, host := range s.cfg.IMAPHosts {
 		dialer := &net.Dialer{Timeout: 15 * time.Second}
 		connection, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, "993"))
@@ -61,10 +62,14 @@ func (s *Service) connectIMAP(ctx context.Context, account *model.AccountCredent
 		authClient := &xoauth2SASL{username: account.Email, token: accessToken}
 		if err := imapClient.Authenticate(authClient); err != nil {
 			lastError = err
+			authenticationFailed = true
 			_ = imapClient.Terminate()
 			continue
 		}
 		return imapClient, nil
+	}
+	if authenticationFailed {
+		return nil, serviceError("Outlook IMAP 授权已失效", "MAIL_AUTH_REQUIRED", http.StatusUnauthorized)
 	}
 	return nil, serviceError("无法连接 Outlook IMAP："+errorMessage(lastError), "IMAP_CONNECTION_FAILED", http.StatusBadGateway)
 }

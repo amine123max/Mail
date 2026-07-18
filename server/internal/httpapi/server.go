@@ -118,6 +118,8 @@ func (s *Server) routes() {
 	s.handleDesktopIdentity("GET /api/v1/desktop/devices", s.listDesktopDevices)
 	s.handleDesktopIdentity("DELETE /api/v1/desktop/devices/{deviceId}", s.withRateLimit(s.authLimit, s.deleteDesktopDevice))
 	s.handleDesktopIdentity("DELETE /api/v1/desktop/devices", s.withRateLimit(s.authLimit, s.deleteAllDesktopDevices))
+	s.handleDesktopIdentity("GET /api/v1/desktop/accounts/{id}/folders/{folder}/changes", s.desktopFolderChanges)
+	s.handleDesktopIdentity("GET /api/v1/desktop/unread-summary", s.desktopUnreadSummary)
 	s.handle("GET /api/auth/status", s.authStatus)
 	s.handle("POST /api/auth/verification/request", s.withRateLimit(s.authLimit, s.requestVerification))
 	s.handle("POST /api/auth/setup", s.withRateLimit(s.authLimit, s.setupAdministrator))
@@ -327,6 +329,9 @@ func (s *Server) writeError(response http.ResponseWriter, request *http.Request,
 	}
 	var mailError *mailservice.Error
 	if errors.As(err, &mailError) {
+		if mailError.RetryAfter != nil {
+			response.Header().Set("Retry-After", strconv.Itoa(*mailError.RetryAfter))
+		}
 		s.writeAPIError(response, request, mailError.Status, mailError.Code, mailError.Message, nil, mailError.Status == http.StatusTooManyRequests || mailError.Status >= 500)
 		return
 	}

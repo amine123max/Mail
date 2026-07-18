@@ -86,3 +86,56 @@ export interface DesktopDeviceListResponse {
   devices: DesktopDeviceSummary[];
 }
 
+export interface DesktopSyncProviderRef {
+  graphId: string | null;
+  deltaScope: string | null;
+  folder: string | null;
+  uidValidity: number | null;
+  uid: number | null;
+  modSequence: number | null;
+}
+
+export interface DesktopSyncChange {
+  id: string;
+  kind: string;
+  changeType: string;
+  provider: string;
+  folder: string;
+  previousFolder: string | null;
+  providerRef: DesktopSyncProviderRef;
+  bodyVersion: string | null;
+  payload: Record<string, unknown>;
+}
+
+export interface DesktopSyncChangesResponse {
+  upserts: DesktopSyncChange[];
+  deletedIds: string[];
+  nextCursor: string;
+  hasMore: boolean;
+  unreadCount: number;
+  serverTime: string;
+  cursorResetRequired: boolean;
+  errorCode: string | null;
+  provider: string;
+  lastSyncAt: string | null;
+}
+
+export interface DesktopUnreadFolderSummary {
+  folder: string;
+  unreadCount: number;
+  totalCount: number;
+}
+
+export interface DesktopUnreadAccountSummary {
+  accountId: number;
+  provider: string;
+  unreadCount: number;
+  folders: DesktopUnreadFolderSummary[];
+  errorCode: string | null;
+}
+
+export interface DesktopUnreadSummaryResponse {
+  accounts: DesktopUnreadAccountSummary[];
+  serverTime: string;
+}
+

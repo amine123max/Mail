@@ -119,4 +119,52 @@ func TestMigratesLegacyPlainEmailAccounts(t *testing.T) {
 	}
 }
 
+func TestDesktopSyncCursorIsolationAndAtomicLastSync(t *testing.T) {
+	storage := openTestStore(t)
+	ctx := context.Background()
+	account := model.ImportedAccount{Email: "sync@example.invalid", Password: "password", ClientID: "client", RefreshToken: "refresh-token-long"}
+	if _, err := storage.ImportAccounts(ctx, "user:1", []model.ImportedAccount{account}, "skip"); err != nil {
+		t.Fatal(err)
+	}
+	accounts, err := storage.ListAccounts(ctx, "user:1")
+	if err != nil || len(accounts) != 1 {
+		t.Fatalf("sync account missing: %#v %v", accounts, err)
+	}
+	accountID := accounts[0].ID
+	if _, _, err := storage.CommitDesktopSyncCursor(ctx, "user:2", accountID, "INBOX", "imap", `{"uidValidity":1}`, false); err == nil {
+		t.Fatal("foreign owner created a sync cursor for another account")
+	}
+	partialCursor, partialSync, err := storage.CommitDesktopSyncCursor(ctx, "user:1", accountID, "INBOX", "imap", `{"uidValidity":1}`, false)
+	if err != nil || partialCursor == "" || partialSync != nil {
+		t.Fatalf("partial cursor commit failed: %q %#v %v", partialCursor, partialSync, err)
+	}
+	accounts, _ = storage.ListAccounts(ctx, "user:1")
+	if accounts[0].LastSyncAt != nil {
+		t.Fatal("partial sync incorrectly updated lastSyncAt")
+	}
+	loaded, err := storage.GetDesktopSyncCursor(ctx, "user:1", accountID, "INBOX", partialCursor)
+	if err != nil || loaded == nil || loaded.Provider != "imap" {
+		t.Fatalf("cursor could not be loaded: %#v %v", loaded, err)
+	}
+	foreign, err := storage.GetDesktopSyncCursor(ctx, "user:2", accountID, "INBOX", partialCursor)
+	if err != nil || foreign != nil {
+		t.Fatal("cursor leaked across owners")
+	}
+	finalCursor, lastSyncAt, err := storage.CommitDesktopSyncCursor(ctx, "user:1", accountID, "INBOX", "imap", `{"uidValidity":1}`, true)
+	if err != nil || finalCursor == "" || lastSyncAt == nil {
+		t.Fatalf("final cursor commit failed: %q %#v %v", finalCursor, lastSyncAt, err)
+	}
+	accounts, _ = storage.ListAccounts(ctx, "user:1")
+	if accounts[0].LastSyncAt == nil || *accounts[0].LastSyncAt != *lastSyncAt {
+		t.Fatal("successful sync did not atomically update lastSyncAt")
+	}
+	if deleted, err := storage.DeleteAccount(ctx, "user:1", accountID); err != nil || !deleted {
+		t.Fatalf("account delete failed: %v", err)
+	}
+	loaded, err = storage.GetDesktopSyncCursor(ctx, "user:1", accountID, "INBOX", finalCursor)
+	if err != nil || loaded != nil {
+		t.Fatal("account deletion did not cascade to sync cursors")
+	}
+}
+
 func nowTime() time.Time { return time.Now().UTC() }

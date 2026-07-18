@@ -9,9 +9,10 @@ import (
 )
 
 type Error struct {
-	Message string
-	Code    string
-	Status  int
+	Message    string
+	Code       string
+	Status     int
+	RetryAfter *int
 }
 
 func (e *Error) Error() string { return e.Message }
@@ -95,4 +96,8 @@ type TokenResult struct {
 
 func serviceError(message, code string, status int) *Error {
 	return &Error{Message: message, Code: code, Status: status}
+}
+
+func serviceErrorWithRetry(message, code string, status int, retryAfter *int) *Error {
+	return &Error{Message: message, Code: code, Status: status, RetryAfter: retryAfter}
 }
