@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/amine123max/Mail/server/internal/config"
 	"github.com/amine123max/Mail/server/internal/secure"
@@ -88,5 +89,28 @@ func TestVerificationConfigurationErrorContract(t *testing.T) {
 	var authErr *Error
 	if !errors.As(err, &authErr) || authErr.Code != "VERIFICATION_EMAIL_NOT_CONFIGURED" {
 		t.Fatalf("unexpected verification error: %#v", err)
+	}
+}
+
+func TestResetPasswordWithEmailVerificationCode(t *testing.T) {
+	service, storage := openAuthTestService(t, nil)
+	const email = "admin@example.com"
+	const oldPassword = "AdminPassword!123"
+	const newPassword = "ChangedPassword!456"
+	if _, err := service.BootstrapAdministrator(context.Background(), "admin", email, oldPassword); err != nil {
+		t.Fatal(err)
+	}
+	const code = "123456"
+	if err := storage.SaveEmailVerification(context.Background(), email, service.verificationHash(email, code), time.Now().Add(VerificationLifetime)); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ResetPassword(context.Background(), email, newPassword, code); err != nil {
+		t.Fatal(err)
+	}
+	if user, err := service.Authenticate(context.Background(), email, oldPassword); err != nil || user != nil {
+		t.Fatalf("old password remained valid: user=%v err=%v", user, err)
+	}
+	if user, err := service.Authenticate(context.Background(), email, newPassword); err != nil || user == nil {
+		t.Fatalf("new password was rejected: user=%v err=%v", user, err)
 	}
 }

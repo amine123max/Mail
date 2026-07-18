@@ -99,6 +99,7 @@ func (s *Server) routes() {
 	s.handle("POST /api/auth/setup", s.withRateLimit(s.authLimit, s.setupAdministrator))
 	s.handle("POST /api/auth/login", s.withRateLimit(s.authLimit, s.login))
 	s.handle("POST /api/auth/register", s.withRateLimit(s.authLimit, s.register))
+	s.handle("POST /api/auth/password/reset", s.withRateLimit(s.authLimit, s.resetPassword))
 	s.handle("POST /api/auth/guest", s.withRateLimit(s.authLimit, s.guest))
 	s.handle("POST /api/auth/logout", s.logout)
 

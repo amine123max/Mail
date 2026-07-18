@@ -57,7 +57,7 @@ func (s *Server) requestVerification(response http.ResponseWriter, request *http
 		return err
 	}
 	body.Email = strings.TrimSpace(body.Email)
-	if !validEmail(body.Email) || len(body.Email) > 254 || (body.Purpose != "setup" && body.Purpose != "register") || (body.Language != "" && body.Language != "zh" && body.Language != "en") {
+	if !validEmail(body.Email) || len(body.Email) > 254 || (body.Purpose != "setup" && body.Purpose != "register" && body.Purpose != "reset") || (body.Language != "" && body.Language != "zh" && body.Language != "en") {
 		return validation("邮箱、验证码用途或语言不正确")
 	}
 	if body.Language == "" {
@@ -175,6 +175,26 @@ func (s *Server) register(response http.ResponseWriter, request *http.Request) e
 	}
 	s.auth.ClearGuestCookie(response)
 	writeJSON(response, http.StatusCreated, map[string]any{"authenticated": true, "username": user.Username, "administrator": false, "transferred": transferred})
+	return nil
+}
+
+func (s *Server) resetPassword(response http.ResponseWriter, request *http.Request) error {
+	var body struct {
+		Email            string `json:"email"`
+		Password         string `json:"password"`
+		VerificationCode string `json:"verificationCode"`
+	}
+	if err := decodeJSON(response, request, &body); err != nil {
+		return err
+	}
+	body.Email = strings.TrimSpace(body.Email)
+	if !validEmail(body.Email) || len(body.Password) < 8 || len(body.Password) > 128 || !regexp.MustCompile(`^\d{6}$`).MatchString(body.VerificationCode) {
+		return validation("密码找回信息格式不正确")
+	}
+	if err := s.auth.ResetPassword(request.Context(), body.Email, body.Password, body.VerificationCode); err != nil {
+		return err
+	}
+	response.WriteHeader(http.StatusNoContent)
 	return nil
 }
 

@@ -35,6 +35,29 @@ func (s *Store) CreateUser(ctx context.Context, username, passwordHash, email st
 	return s.createUserWith(ctx, s.db, username, passwordHash, email, administrator)
 }
 
+func (s *Store) UpdateUserPassword(ctx context.Context, userID int64, passwordHash string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, "UPDATE users SET password_hash=? WHERE id=?", passwordHash, userID)
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return fmt.Errorf("user %d not found", userID)
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM user_sessions WHERE user_id=?", userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) IsSetupRequired(ctx context.Context) (bool, error) {
 	var present int
 	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM users LIMIT 1").Scan(&present)

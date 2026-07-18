@@ -114,6 +114,25 @@ func (s *Service) Register(ctx context.Context, username, email, password, code 
 	return s.store.CreateUser(ctx, username, hash, email, false)
 }
 
+func (s *Service) ResetPassword(ctx context.Context, email, password, code string) error {
+	email = normalizeEmail(email)
+	user, err := s.store.FindUserByEmail(ctx, email)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return authError("该邮箱尚未注册", "EMAIL_NOT_FOUND", http.StatusNotFound)
+	}
+	if err := s.verifyCode(ctx, email, code); err != nil {
+		return err
+	}
+	hash, err := hashPassword(password)
+	if err != nil {
+		return err
+	}
+	return s.store.UpdateUserPassword(ctx, user.ID, hash)
+}
+
 func (s *Service) InitializeAdministrator(ctx context.Context, username, email, password, code string) (*model.User, error) {
 	setup, err := s.store.IsSetupRequired(ctx)
 	if err != nil {
@@ -171,11 +190,17 @@ func (s *Service) RequestRegistrationCode(ctx context.Context, email, purpose, l
 	if purpose == "register" && setup {
 		return nil, authError("请先完成管理员初始化", "SETUP_REQUIRED", http.StatusConflict)
 	}
+	if purpose == "reset" && setup {
+		return nil, authError("请先完成管理员初始化", "SETUP_REQUIRED", http.StatusConflict)
+	}
 	user, err := s.store.FindUserByEmail(ctx, email)
 	if err != nil {
 		return nil, err
 	}
-	if user != nil {
+	if purpose == "reset" && user == nil {
+		return nil, authError("该邮箱尚未注册", "EMAIL_NOT_FOUND", http.StatusNotFound)
+	}
+	if purpose != "reset" && user != nil {
 		return nil, authError("该邮箱已被注册", "EMAIL_EXISTS", http.StatusConflict)
 	}
 	allowed, err := s.store.CanSendEmailVerification(ctx, email, VerificationCooldown)
