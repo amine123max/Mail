@@ -4,7 +4,8 @@ ARG VITE_BASE_PATH=/mail/
 ENV VITE_BASE_PATH=$VITE_BASE_PATH
 COPY package*.json ./
 RUN npm ci
-COPY index.html vite.config.ts tsconfig.json ./
+COPY index.html vite.config.ts tsconfig.json version.json ./
+COPY packages ./packages
 COPY public ./public
 COPY src ./src
 RUN npm run build:web
