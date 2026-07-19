@@ -62,13 +62,13 @@ import { SidebarAccounts } from "./components/SidebarAccounts";
 import { useI18n } from "./i18n";
 import {
   mailPath,
+  parseMailPath,
   routeForSegment,
   type FolderRoute,
   type MailRoute,
   type MailRouteSegment,
   type PageRoute,
 } from "./routes";
-import { parseWebMailPath } from "./webRoutes";
 
 type Toast = { id: number; message: string; type: "success" | "error" };
 type CurrentUser = { username: string; administrator: boolean };
@@ -214,7 +214,7 @@ const folderDefinitions = [
 ];
 
 function App() {
-  const initialRoute = useMemo(() => parseWebMailPath(window.location.pathname, appBasePath), []);
+  const initialRoute = useMemo(() => parseMailPath(window.location.pathname, appBasePath), []);
   const { language, setLanguage, t } = useI18n();
   const [authState, setAuthState] = useState<"checking" | "setup" | "signedOut" | "guest" | "authenticated">("checking");
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
@@ -394,15 +394,14 @@ function App() {
   }, [appEntering]);
 
   useEffect(() => {
-    const route = parseWebMailPath(window.location.pathname, appBasePath);
+    const route = parseMailPath(window.location.pathname, appBasePath);
     if (route.known) {
-      const path = mailPath(route.segment, appBasePath);
-      window.history.replaceState({ mailRoute: route.segment }, "", path);
+      window.history.replaceState({ mailRoute: route.segment }, "", window.location.href);
     } else {
-      window.history.replaceState({ mailRoute: "oauth" }, "", mailPath("oauth", appBasePath));
-      applyMailRoute(routeForSegment("oauth"));
+      window.history.replaceState({ mailRoute: "" }, "", mailPath("", appBasePath));
+      applyMailRoute(routeForSegment(""));
     }
-    const handlePopState = () => applyMailRoute(parseWebMailPath(window.location.pathname, appBasePath));
+    const handlePopState = () => applyMailRoute(parseMailPath(window.location.pathname, appBasePath));
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, [applyMailRoute]);
@@ -418,10 +417,11 @@ function App() {
 
   useEffect(() => {
     if (authState === "checking") return;
-    if (page === "login") return;
     if (authState === "signedOut" || authState === "setup") {
-      navigateTo("oauth", { replace: true });
+      if (page !== "login") navigateTo("oauth", { replace: true });
+      return;
     }
+    if (page === "login") navigateTo("inbox", { replace: true });
   }, [authState, navigateTo, page]);
 
   const loadAccounts = useCallback(async () => {
@@ -756,7 +756,7 @@ function App() {
     return <div className="boot-screen"><RefreshCw className="spin" size={17} /></div>;
   }
 
-  if (page === "login" || authState === "signedOut" || authState === "setup") {
+  if (authState === "signedOut" || authState === "setup") {
     return <LoginPage setupRequired={authState === "setup"} dark={dark} setDark={setDark} onLogin={(user) => { navigateTo("inbox", { replace: true }); setAccounts([]); setSelectedAccountId(null); setAppEntering(true); setCurrentUser(user); setAuthState("authenticated"); }} onGuest={() => { navigateTo("inbox", { replace: true }); setAccounts([]); setSelectedAccountId(null); setAppEntering(true); setCurrentUser(null); setAuthState("guest"); }} />;
   }
 
