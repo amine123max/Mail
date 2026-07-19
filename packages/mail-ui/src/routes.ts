@@ -1,7 +1,7 @@
-export type PageRoute = "inbox" | "compose" | "accounts" | "oauth" | "settings" | "admin" | "users";
+export type PageRoute = "login" | "inbox" | "compose" | "accounts" | "oauth" | "settings" | "admin" | "users";
 export type FolderRoute = "inbox" | "sent" | "drafts" | "archive" | "trash";
 export type DialogRoute = "import" | null;
-export type MailRouteSegment = "" | FolderRoute | "sendmails" | "accounts" | "import" | "oauth" | "settings" | "admin" | "users";
+export type MailRouteSegment = "" | FolderRoute | "sendmails" | "accounts" | "import" | "oauth" | "microsoft-oauth" | "settings" | "admin" | "users";
 
 export type MailRoute = {
   segment: MailRouteSegment;
@@ -23,7 +23,8 @@ export function routeForSegment(value: string): MailRoute {
   if (segment === "sendmails") return { segment, page: "compose", folder: null, dialog: null, known: true };
   if (segment === "accounts") return { segment, page: "accounts", folder: null, dialog: null, known: true };
   if (segment === "import") return { segment, page: "accounts", folder: null, dialog: "import", known: true };
-  if (segment === "oauth") return { segment, page: "oauth", folder: null, dialog: null, known: true };
+  if (segment === "oauth") return { segment, page: "login", folder: null, dialog: null, known: true };
+  if (segment === "microsoft-oauth") return { segment, page: "oauth", folder: null, dialog: null, known: true };
   if (segment === "settings") return { segment, page: "settings", folder: null, dialog: null, known: true };
   if (segment === "admin") return { segment, page: "admin", folder: null, dialog: null, known: true };
   if (segment === "users") return { segment, page: "users", folder: null, dialog: null, known: true };

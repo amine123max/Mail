@@ -205,11 +205,12 @@ Mail 不会要求用户在应用中输入微软密码。用户在微软验证页
 | `/sendmails` | 发信工作区 |
 | `/accounts` | 账号管理 |
 | `/import` | 导入账号 |
-| `/oauth` | 微软授权 |
+| `/oauth` | 登录与注册 |
+| `/microsoft-oauth` | 微软邮箱授权 |
 | `/settings` | 系统设置 |
 | `/admin` | 管理员总览 |
 
-部署在 `/mail` 子路径时，对应地址为 `/mail/inbox`、`/mail/sendmails` 等。
+部署在 `/mail` 子路径时，对应地址为 `/mail/oauth`、`/mail/inbox`、`/mail/microsoft-oauth` 等。未登录访问 `/mail/` 会自动跳转到 `/mail/oauth`。
 
 ## 生产环境部署
 

@@ -74,14 +74,16 @@ func TestConfiguredBasePathServesAPIAndSPA(t *testing.T) {
 	if status != http.StatusOK || health["runtime"] != "go" {
 		t.Fatalf("base-path health failed: %d %#v", status, health)
 	}
-	response, err := client.Get(server.URL + "/mail/accounts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer response.Body.Close()
-	page, _ := io.ReadAll(response.Body)
-	if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("Mail test")) {
-		t.Fatalf("base-path SPA failed: %d %s", response.StatusCode, page)
+	for _, path := range []string{"/mail/", "/mail/oauth", "/mail/accounts", "/mail/microsoft-oauth"} {
+		response, err := client.Get(server.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		page, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK || !bytes.Contains(page, []byte("Mail test")) {
+			t.Fatalf("base-path SPA failed for %s: %d %s", path, response.StatusCode, page)
+		}
 	}
 }
 

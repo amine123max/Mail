@@ -210,11 +210,12 @@ Stable English paths support direct access, refresh, and browser history:
 | `/sendmails` | Compose workspace |
 | `/accounts` | Account management |
 | `/import` | Account import |
-| `/oauth` | Microsoft authorization |
+| `/oauth` | Sign-in and registration |
+| `/microsoft-oauth` | Microsoft mailbox authorization |
 | `/settings` | System settings |
 | `/admin` | Administrator overview |
 
-When deployed below `/mail`, the same routes become `/mail/inbox`, `/mail/sendmails`, and so on.
+When deployed below `/mail`, the same routes become `/mail/oauth`, `/mail/inbox`, and `/mail/microsoft-oauth`. Signed-out visits to `/mail/` are redirected to `/mail/oauth`.
 
 ## Production deployment
 

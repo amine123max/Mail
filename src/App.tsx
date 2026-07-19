@@ -60,7 +60,6 @@ import { ImportDialog } from "./components/ImportDialog";
 import { OAuthPage } from "./components/OAuthPage";
 import { SidebarAccounts } from "./components/SidebarAccounts";
 import { useI18n } from "./i18n";
-import versionInfo from "../version.json";
 import {
   mailPath,
   parseMailPath,
@@ -111,10 +110,10 @@ type MessageMoveConfirmation = {
 };
 const brandLogoUrl = `${import.meta.env.BASE_URL}paper-plane-logo.png`;
 const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-const desktopReleaseBaseUrl = `https://github.com/amine123max/MailManager/releases/download/v${versionInfo.version}`;
+const desktopReleaseBaseUrl = "https://github.com/amine123max/MailManager/releases/latest/download";
 const desktopDownloads = [
-  { title: "Windows 安装版", format: "EXE", filename: `AilliveMail_${versionInfo.version}_x64-setup.exe`, recommended: true },
-  { title: "Windows MSI", format: "MSI", filename: `AilliveMail_${versionInfo.version}_x64_zh-CN.msi`, recommended: false },
+  { title: "Windows 安装版", format: "EXE", filename: "AilliveMail_x64-setup.exe", recommended: true },
+  { title: "Windows MSI", format: "MSI", filename: "AilliveMail_x64_zh-CN.msi", recommended: false },
   { title: "Windows 便携版", format: "EXE", filename: "AilliveMail.exe", recommended: false },
 ] as const;
 const avatarGradients = [
@@ -415,6 +414,15 @@ function App() {
       })
       .catch(() => { setCurrentUser(null); setAuthState("signedOut"); });
   }, []);
+
+  useEffect(() => {
+    if (authState === "checking") return;
+    if (authState === "signedOut" || authState === "setup") {
+      if (page !== "login") navigateTo("oauth", { replace: true });
+      return;
+    }
+    if (page === "login") navigateTo("inbox", { replace: true });
+  }, [authState, navigateTo, page]);
 
   const loadAccounts = useCallback(async () => {
     try {
@@ -736,7 +744,7 @@ function App() {
 		if (!account) return;
 		setSelectedAccountId(account.id);
 		setOauthAccount(account);
-		navigateTo("oauth");
+		navigateTo("microsoft-oauth");
 	};
 
   const openFolder = (folder: (typeof visibleFolders)[number]) => {
@@ -749,7 +757,7 @@ function App() {
   }
 
   if (authState === "signedOut" || authState === "setup") {
-    return <LoginPage setupRequired={authState === "setup"} dark={dark} setDark={setDark} onLogin={(user) => { navigateTo("", { replace: true }); setAccounts([]); setSelectedAccountId(null); setAppEntering(true); setCurrentUser(user); setAuthState("authenticated"); }} onGuest={() => { navigateTo("", { replace: true }); setAccounts([]); setSelectedAccountId(null); setAppEntering(true); setCurrentUser(null); setAuthState("guest"); }} />;
+    return <LoginPage setupRequired={authState === "setup"} dark={dark} setDark={setDark} onLogin={(user) => { navigateTo("inbox", { replace: true }); setAccounts([]); setSelectedAccountId(null); setAppEntering(true); setCurrentUser(user); setAuthState("authenticated"); }} onGuest={() => { navigateTo("inbox", { replace: true }); setAccounts([]); setSelectedAccountId(null); setAppEntering(true); setCurrentUser(null); setAuthState("guest"); }} />;
   }
 
   const sidebar = (
@@ -780,7 +788,7 @@ function App() {
             <Users size={18} /> {t("账号管理")}
           </button>
           <button onClick={() => navigateTo("import")}><Plus size={18} /> {t("导入账号")}</button>
-          <button onClick={() => { setOauthAccount(selectedAccount); navigateTo("oauth"); }}><KeyRound size={18} /> {t("微软授权")}</button>
+          <button className={page === "oauth" ? "active" : ""} onClick={() => { setOauthAccount(selectedAccount); navigateTo("microsoft-oauth"); }}><KeyRound size={18} /> {t("微软授权")}</button>
           {currentUser?.administrator && <>
             <span className="nav-label nav-label-spaced">ADMIN</span>
             <button className={page === "admin" ? "active" : ""} onClick={() => navigateTo("admin")}><LayoutDashboard size={18} /> {t("管理概览")}</button>
@@ -871,7 +879,7 @@ function App() {
                 setSelectedAccountId(null);
                 setCurrentUser(null);
                 setAuthState("signedOut");
-                navigateTo("", { replace: true });
+                navigateTo("oauth", { replace: true });
               }}
             ><LogOut size={14} /></button>
           </div>
@@ -922,12 +930,12 @@ function App() {
               openImport={() => navigateTo("import")}
               notify={notify}
               reload={loadAccounts}
-              authorize={(account) => { setOauthAccount(account); navigateTo("oauth"); }}
+              authorize={(account) => { setOauthAccount(account); navigateTo("microsoft-oauth"); }}
               requestDelete={setAccountDeleteConfirmation}
             />
           )}
           {page === "settings" && (
-            <SettingsPage authorize={() => { setOauthAccount(selectedAccount); navigateTo("oauth"); }} />
+            <SettingsPage authorize={() => { setOauthAccount(selectedAccount); navigateTo("microsoft-oauth"); }} />
           )}
           {page === "admin" && currentUser?.administrator && <AdminOverviewPage />}
           {page === "users" && currentUser?.administrator && <AdminUsersPage />}
