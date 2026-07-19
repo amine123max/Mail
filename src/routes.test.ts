@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mailPath, parseMailPath, routeForSegment } from "./routes";
+import { parseWebMailPath } from "./webRoutes";
 
 describe("mail routes", () => {
   it("uses /oauth as the public login route", () => {
@@ -9,6 +10,10 @@ describe("mail routes", () => {
       known: true,
     });
     expect(mailPath("oauth", "/mail/")).toBe("/mail/oauth");
+    expect(parseWebMailPath("/mail/", "/mail/")).toMatchObject({
+      segment: "oauth",
+      page: "login",
+    });
   });
 
   it("keeps Microsoft mailbox authorization on its own main-app tab", () => {
