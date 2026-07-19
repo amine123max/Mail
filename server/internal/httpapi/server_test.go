@@ -3,6 +3,8 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -204,6 +207,105 @@ func TestAuthenticationIsolationImportExportAndGuestTransfer(t *testing.T) {
 	spa, _ := io.ReadAll(response.Body)
 	if response.StatusCode != http.StatusOK || !bytes.Contains(spa, []byte("Mail test")) {
 		t.Fatalf("SPA route failed: %d %s", response.StatusCode, spa)
+	}
+}
+
+func TestCompletedMailOperationReplaysWithoutCallingUpstream(t *testing.T) {
+	server, storage := newAPITestServer(t)
+	user := newCookieClient(t)
+	status, _ := apiJSON(t, user, http.MethodPost, server.URL+"/api/auth/login", map[string]any{
+		"email": "admin@example.com", "password": "AdminPassword!123",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("login status = %d", status)
+	}
+	status, imported := apiJSON(t, user, http.MethodPost, server.URL+"/api/accounts/import", map[string]any{
+		"raw": "operation@example.invalid----password----client-id-operation----refresh-token-operation-long", "mode": "skip",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("import status = %d %#v", status, imported)
+	}
+	accountID := int64(imported["accounts"].([]any)[0].(map[string]any)["id"].(float64))
+	operationID := "operation-replay-12345678"
+	uid, folder := "graph:message-id", "graph:inbox"
+	digest := sha256.Sum256([]byte(strings.Join([]string{"flag", strconv.FormatInt(accountID, 10), uid, folder, "true"}, "\x00")))
+	claim, err := storage.ClaimMailOperation(context.Background(), "user:1", operationID, "flag", hex.EncodeToString(digest[:]))
+	if err != nil || claim != store.MailOperationClaimed {
+		t.Fatalf("operation seed failed: %q %v", claim, err)
+	}
+	if err := storage.CompleteMailOperation(context.Background(), "user:1", operationID); err != nil {
+		t.Fatal(err)
+	}
+	status, replay := apiJSON(t, user, http.MethodPatch, server.URL+"/api/accounts/"+strconv.FormatInt(accountID, 10)+"/messages/"+uid+"/flag", map[string]any{
+		"folder": folder, "flagged": true, "operationId": operationID,
+	})
+	if status != http.StatusOK || replay["flagged"] != true {
+		t.Fatalf("completed operation did not replay: %d %#v", status, replay)
+	}
+	status, conflict := apiJSON(t, user, http.MethodPatch, server.URL+"/api/accounts/"+strconv.FormatInt(accountID, 10)+"/messages/"+uid+"/flag", map[string]any{
+		"folder": folder, "flagged": false, "operationId": operationID,
+	})
+	if status != http.StatusConflict || conflict["code"] != "OPERATION_ID_REUSED" {
+		t.Fatalf("operation id reuse was not rejected: %d %#v", status, conflict)
+	}
+}
+
+func TestCompletedSendOperationReplaysStoredResult(t *testing.T) {
+	server, storage := newAPITestServer(t)
+	user := newCookieClient(t)
+	status, _ := apiJSON(t, user, http.MethodPost, server.URL+"/api/auth/login", map[string]any{
+		"email": "admin@example.com", "password": "AdminPassword!123",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("login status = %d", status)
+	}
+	status, imported := apiJSON(t, user, http.MethodPost, server.URL+"/api/accounts/import", map[string]any{
+		"raw": "send-replay@example.invalid----password----client-id-send-replay----refresh-token-send-replay-long", "mode": "skip",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("import status = %d %#v", status, imported)
+	}
+	accountID := int64(imported["accounts"].([]any)[0].(map[string]any)["id"].(float64))
+	operationID := "send-replay-operation-12345678"
+	body := mailservice.SendRequest{
+		To: "receiver@example.com", Subject: "idempotent send", Text: "hello", Attachments: []mailservice.AttachmentInput{}, OperationID: operationID,
+	}
+	fingerprint, err := sendOperationFingerprint(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte(strings.Join([]string{"send", strconv.FormatInt(accountID, 10), fingerprint}, "\x00")))
+	claim, err := storage.ClaimMailOperation(context.Background(), "user:1", operationID, "send", hex.EncodeToString(digest[:]))
+	if err != nil || claim != store.MailOperationClaimed {
+		t.Fatalf("send operation seed failed: %q %v", claim, err)
+	}
+	stored := sendMessageResponse{Status: "sent", MessageID: "stored-message-id", Accepted: []string{"receiver@example.com"}, Transport: "graph"}
+	encoded, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.CompleteMailOperationWithResult(context.Background(), "user:1", operationID, string(encoded)); err != nil {
+		t.Fatal(err)
+	}
+	status, replay := apiJSON(t, user, http.MethodPost, server.URL+"/api/accounts/"+strconv.FormatInt(accountID, 10)+"/send", body)
+	if status != http.StatusCreated || replay["messageId"] != "stored-message-id" || replay["transport"] != "graph" {
+		t.Fatalf("stored send result was not replayed: %d %#v", status, replay)
+	}
+	body.Subject = "changed subject"
+	status, conflict := apiJSON(t, user, http.MethodPost, server.URL+"/api/accounts/"+strconv.FormatInt(accountID, 10)+"/send", body)
+	if status != http.StatusConflict || conflict["code"] != "OPERATION_ID_REUSED" {
+		t.Fatalf("send operation id reuse was not rejected: %d %#v", status, conflict)
+	}
+	body.OperationID = "send-validation-operation-12345678"
+	body.To = "not-an-address"
+	status, invalid := apiJSON(t, user, http.MethodPost, server.URL+"/api/accounts/"+strconv.FormatInt(accountID, 10)+"/send", body)
+	details, _ := invalid["details"].([]any)
+	if status != http.StatusBadRequest || len(details) == 0 {
+		t.Fatalf("send validation did not identify the field: %d %#v", status, invalid)
+	}
+	first, _ := details[0].(map[string]any)
+	if first["field"] != "to" {
+		t.Fatalf("send validation field mismatch: %#v", invalid)
 	}
 }
 

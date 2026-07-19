@@ -172,6 +172,56 @@ func TestGraphFolderAndMessageMapping(t *testing.T) {
 	}
 }
 
+func TestGraphMessageReadStateIsExplicit(t *testing.T) {
+	dataDir := t.TempDir()
+	box, err := secure.New(dataDir, strings.Repeat("07", 32), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage, err := store.Open(dataDir, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	requests := make([]string, 0, 2)
+	var readValue any
+	service := &Service{store: storage, httpClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests = append(requests, request.Method+" "+request.URL.Path)
+		if request.Method == http.MethodDelete {
+			return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(nil))}, nil
+		}
+		if request.Method == http.MethodPatch {
+			var payload map[string]any
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			readValue = payload["isRead"]
+			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+		}
+		body := `{"id":"message-id","subject":"Explicit","sender":{"emailAddress":{"address":"sender@example.com"}},"receivedDateTime":"2026-07-19T01:02:03Z","isRead":false,"hasAttachments":false,"body":{"contentType":"text","content":"body"}}`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}}
+	account := &model.AccountCredentials{ID: 99, OwnerKey: "user:1"}
+	if _, err := service.graphGetMessage(context.Background(), account, "token", "graph:message-id"); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 1 || !strings.HasPrefix(requests[0], "GET ") {
+		t.Fatalf("opening a message changed read state implicitly: %#v", requests)
+	}
+	if err := service.graphSetRead(context.Background(), account, "token", "graph:message-id", false); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 2 || !strings.HasPrefix(requests[1], "PATCH ") || readValue != false {
+		t.Fatalf("explicit read-state request mismatch: requests=%#v isRead=%#v", requests, readValue)
+	}
+	if err := service.graphDeleteMessage(context.Background(), account, "token", "graph:message-id"); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 3 || !strings.HasPrefix(requests[2], "DELETE ") {
+		t.Fatalf("explicit permanent-delete request mismatch: %#v", requests)
+	}
+}
+
 func TestOAuthRefreshRequestMapping(t *testing.T) {
 	service := &Service{httpClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if request.URL.Host != "login.microsoftonline.com" {

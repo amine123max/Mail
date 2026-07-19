@@ -235,12 +235,11 @@ func (s *Service) imapGetMessage(ctx context.Context, account *model.AccountCred
 	if err != nil {
 		return MessageDetail{}, err
 	}
-	_ = connection.UidStore(sequenceSet, imap.AddFlags, []interface{}{imap.SeenFlag}, nil)
 	_ = s.store.MarkAccountSynced(ctx, account.OwnerKey, account.ID)
 	return s.parsedDetail(ctx, uint32(numericUID), parsed), nil
 }
 
-func (s *Service) imapMoveMessage(ctx context.Context, account *model.AccountCredentials, token, folder, uid, target string) error {
+func (s *Service) imapSetRead(ctx context.Context, account *model.AccountCredentials, token, folder, uid string, read bool) error {
 	numericUID, err := strconv.ParseUint(uid, 10, 32)
 	if err != nil || numericUID < 1 {
 		return serviceError("邮件 UID 无效", "INVALID_MESSAGE_UID", http.StatusBadRequest)
@@ -255,30 +254,73 @@ func (s *Service) imapMoveMessage(ctx context.Context, account *model.AccountCre
 	}
 	sequenceSet := new(imap.SeqSet)
 	sequenceSet.AddNum(uint32(numericUID))
+	operation := imap.FormatFlagsOp(imap.RemoveFlags, false)
+	if read {
+		operation = imap.FormatFlagsOp(imap.AddFlags, false)
+	}
+	if err := connection.UidStore(sequenceSet, operation, []interface{}{imap.SeenFlag}, nil); err != nil {
+		return err
+	}
+	return s.store.MarkAccountSynced(ctx, account.OwnerKey, account.ID)
+}
+
+func (s *Service) imapMoveMessage(ctx context.Context, account *model.AccountCredentials, token, folder, uid, target string) error {
 	if strings.EqualFold(folder, target) {
+		return s.imapDeleteMessage(ctx, account, token, folder, uid)
+	}
+	numericUID, err := strconv.ParseUint(uid, 10, 32)
+	if err != nil || numericUID < 1 {
+		return serviceError("邮件 UID 无效", "INVALID_MESSAGE_UID", http.StatusBadRequest)
+	}
+	connection, err := s.connectIMAP(ctx, account, token)
+	if err != nil {
+		return err
+	}
+	defer connection.Logout()
+	if _, err := connection.Select(folder, false); err != nil {
+		return err
+	}
+	sequenceSet := new(imap.SeqSet)
+	sequenceSet.AddNum(uint32(numericUID))
+	supportsMove, capabilityErr := connection.Support("MOVE")
+	if capabilityErr == nil && supportsMove {
+		if err := connection.UidMove(sequenceSet, target); err != nil {
+			return err
+		}
+	} else {
+		if err := connection.UidCopy(sequenceSet, target); err != nil {
+			return err
+		}
 		if err := connection.UidStore(sequenceSet, imap.AddFlags, []interface{}{imap.DeletedFlag}, nil); err != nil {
 			return err
 		}
 		if err := connection.Expunge(nil); err != nil {
 			return err
 		}
-	} else {
-		supportsMove, capabilityErr := connection.Support("MOVE")
-		if capabilityErr == nil && supportsMove {
-			if err := connection.UidMove(sequenceSet, target); err != nil {
-				return err
-			}
-		} else {
-			if err := connection.UidCopy(sequenceSet, target); err != nil {
-				return err
-			}
-			if err := connection.UidStore(sequenceSet, imap.AddFlags, []interface{}{imap.DeletedFlag}, nil); err != nil {
-				return err
-			}
-			if err := connection.Expunge(nil); err != nil {
-				return err
-			}
-		}
+	}
+	return s.store.MarkAccountSynced(ctx, account.OwnerKey, account.ID)
+}
+
+func (s *Service) imapDeleteMessage(ctx context.Context, account *model.AccountCredentials, token, folder, uid string) error {
+	numericUID, err := strconv.ParseUint(uid, 10, 32)
+	if err != nil || numericUID < 1 {
+		return serviceError("邮件 UID 无效", "INVALID_MESSAGE_UID", http.StatusBadRequest)
+	}
+	connection, err := s.connectIMAP(ctx, account, token)
+	if err != nil {
+		return err
+	}
+	defer connection.Logout()
+	if _, err := connection.Select(folder, false); err != nil {
+		return err
+	}
+	sequenceSet := new(imap.SeqSet)
+	sequenceSet.AddNum(uint32(numericUID))
+	if err := connection.UidStore(sequenceSet, imap.AddFlags, []interface{}{imap.DeletedFlag}, nil); err != nil {
+		return err
+	}
+	if err := connection.Expunge(nil); err != nil {
+		return err
 	}
 	return s.store.MarkAccountSynced(ctx, account.OwnerKey, account.ID)
 }

@@ -151,6 +151,8 @@ func (s *Server) routes() {
 	s.handleIdentity("GET /api/accounts/{id}/folders", false, false, s.listFolders)
 	s.handleIdentity("GET /api/accounts/{id}/messages", false, false, s.listMessages)
 	s.handleIdentity("GET /api/accounts/{id}/messages/{uid}", false, false, s.getMessage)
+	s.handleIdentity("DELETE /api/accounts/{id}/messages/{uid}", false, false, s.deleteMessage)
+	s.handleIdentity("PATCH /api/accounts/{id}/messages/{uid}/read", false, false, s.readMessage)
 	s.handleIdentity("POST /api/accounts/{id}/messages/{uid}/move", false, false, s.moveMessage)
 	s.handleIdentity("PATCH /api/accounts/{id}/messages/{uid}/flag", false, false, s.flagMessage)
 	s.handleIdentity("POST /api/accounts/{id}/send", true, false, s.withRateLimit(s.sendLimit, s.sendMessage))
@@ -319,7 +321,7 @@ func (s *Server) writeError(response http.ResponseWriter, request *http.Request,
 	}
 	var validation *ValidationError
 	if errors.As(err, &validation) {
-		s.writeAPIError(response, request, http.StatusBadRequest, "VALIDATION_ERROR", "请求参数不正确", validation.Details, false)
+		s.writeAPIError(response, request, http.StatusBadRequest, "VALIDATION_ERROR", validation.Message, validation.Details, false)
 		return
 	}
 	var authError *auth.Error

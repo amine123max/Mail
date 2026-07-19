@@ -81,6 +81,7 @@ type SendRequest struct {
 	HTML        string            `json:"html"`
 	Attachments []AttachmentInput `json:"attachments"`
 	Transport   string            `json:"transport,omitempty"`
+	OperationID string            `json:"operationId"`
 }
 
 type SendResult struct {

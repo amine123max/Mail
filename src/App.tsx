@@ -76,15 +76,29 @@ type CurrentUser = { username: string; administrator: boolean };
 type AdminStats = { users: number; mailboxAccounts: number; activeGuests: number; announcements: number };
 type AdminUserSummary = { id: number; username: string; email: string; administrator: boolean; disabled: boolean; disabledAt: string | null; accountCount: number; createdAt: string };
 type AdminActivityPoint = { date: string; users: number; accounts: number; guests: number; announcements: number };
+type SendDraft = {
+	accountId: number;
+	to: string;
+	cc: string;
+	bcc: string;
+	subject: string;
+	text: string;
+	html: string;
+	attachments: ComposeAttachment[];
+};
 type PendingSend = {
-  id: string;
-  accountId: number;
-  from: string;
-  to: string;
-  subject: string;
-  createdAt: string;
-  status: "sending" | "failed";
-  error?: string;
+	id: string;
+	accountId: number;
+	from: string;
+	to: string;
+	subject: string;
+	createdAt: string;
+	updatedAt: string;
+	status: "queued" | "sending" | "sent" | "failed";
+	attempts: number;
+	error?: string;
+	requiresAuthorization?: boolean;
+	draft?: SendDraft;
 };
 type MessageMoveConfirmation = {
   accountId: number;
@@ -97,7 +111,7 @@ type MessageMoveConfirmation = {
 };
 const brandLogoUrl = `${import.meta.env.BASE_URL}paper-plane-logo.png`;
 const appBasePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-const desktopReleaseBaseUrl = `https://github.com/amine123max/Mail/releases/download/v${versionInfo.version}`;
+const desktopReleaseBaseUrl = `https://github.com/amine123max/MailManager/releases/download/v${versionInfo.version}`;
 const desktopDownloads = [
   { title: "Windows 安装版", format: "EXE", filename: `AilliveMail_${versionInfo.version}_x64-setup.exe`, recommended: true },
   { title: "Windows MSI", format: "MSI", filename: `AilliveMail_${versionInfo.version}_x64_zh-CN.msi`, recommended: false },
@@ -167,6 +181,14 @@ async function copyPlainText(value: string): Promise<void> {
   if (!copied) throw new Error("Clipboard access was denied");
 }
 
+function createOperationId(): string {
+  return globalThis.crypto?.randomUUID?.() || `op-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function sendRequiresAuthorization(error: unknown): boolean {
+	return error instanceof ApiError && ["SMTP_SCOPE_MISSING", "MAIL_AUTH_REQUIRED", "TOKEN_REFRESH_FAILED"].includes(error.code || "");
+}
+
 function messageListDate(value: string, locale: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -233,6 +255,8 @@ function App() {
     const stored = Number(localStorage.getItem("mail-list-font-scale"));
     return Number.isFinite(stored) && stored >= 0.9 && stored <= 1.4 ? stored : 1.1;
   });
+	const operationIdsRef = useRef(new Map<string, string>());
+	const pendingSendBusyRef = useRef(new Set<string>());
 
   const selectedAccount = accounts.find((item) => item.id === selectedAccountId) || null;
   const visibleFolders = useMemo(() => folderDefinitions.map((definition) => {
@@ -270,6 +294,18 @@ function App() {
     window.setTimeout(() => {
       setToasts((current) => current.filter((toast) => toast.id !== id));
     }, 4500);
+  }, []);
+
+  const operationIdFor = useCallback((key: string) => {
+    const existing = operationIdsRef.current.get(key);
+    if (existing) return existing;
+    const operationId = createOperationId();
+    operationIdsRef.current.set(key, operationId);
+    return operationId;
+  }, []);
+
+  const completeOperation = useCallback((key: string) => {
+    operationIdsRef.current.delete(key);
   }, []);
 
   const loadAnnouncements = useCallback(async (silent = false) => {
@@ -324,6 +360,10 @@ function App() {
     document.documentElement.classList.toggle("dark", dark);
     localStorage.setItem("mail-theme", dark ? "dark" : "light");
   }, [dark]);
+
+  useEffect(() => {
+    if (authState === "signedOut" || authState === "setup") operationIdsRef.current.clear();
+  }, [authState]);
 
   useEffect(() => {
     localStorage.setItem("mail-list-font-scale", String(mailFontScale));
@@ -509,6 +549,29 @@ function App() {
 
   useEffect(() => void loadMessages(), [loadMessages]);
 
+  const updateMessageReadState = useCallback(async (
+    uid: number | string,
+    read: boolean,
+    errorMessage: string,
+  ): Promise<boolean> => {
+    if (!selectedAccountId) return false;
+    const operationKey = `read:${selectedAccountId}:${selectedFolder}:${String(uid)}:${read}`;
+    setMessages((current) => current.map((message) => message.uid === uid ? { ...message, unread: !read } : message));
+    try {
+      const operationId = operationIdFor(operationKey);
+      await api(`/api/accounts/${selectedAccountId}/messages/${encodeURIComponent(String(uid))}/read`, {
+        method: "PATCH",
+        body: JSON.stringify({ folder: selectedFolder, read, operationId }),
+      });
+      completeOperation(operationKey);
+      return true;
+    } catch (error) {
+      setMessages((current) => current.map((message) => message.uid === uid ? { ...message, unread: read } : message));
+      notify(error instanceof Error ? error.message : errorMessage, "error");
+      return false;
+    }
+  }, [completeOperation, notify, operationIdFor, selectedAccountId, selectedFolder]);
+
   const openMessage = async (message: MessageSummary) => {
     if (!selectedAccountId) return;
     setMessageLoading(true);
@@ -518,7 +581,9 @@ function App() {
         `/api/accounts/${selectedAccountId}/messages/${encodeURIComponent(String(message.uid))}?${params}`,
       );
       setSelectedMessage(result.message);
-      setMessages((current) => current.map((item) => item.uid === message.uid ? { ...item, unread: false } : item));
+      if (message.unread) {
+        await updateMessageReadState(message.uid, true, "邮件已打开，但未能标记为已读");
+      }
     } catch (error) {
       notify(error instanceof Error ? error.message : "无法打开邮件", "error");
     } finally {
@@ -549,10 +614,19 @@ function App() {
     if (!action) return;
     setMessageActionLoading(true);
     try {
-      await api(`/api/accounts/${action.accountId}/messages/${encodeURIComponent(String(action.uid))}/move`, {
-        method: "POST",
-        body: JSON.stringify({ folder: action.sourceFolder, targetFolder: action.targetFolder }),
-      });
+      const permanent = action.sourceRoute === "trash" && action.targetRoute === "trash";
+      const operationKey = `${permanent ? "delete" : "move"}:${action.accountId}:${action.sourceFolder}:${String(action.uid)}:${action.targetFolder}`;
+      const operationId = operationIdFor(operationKey);
+      if (permanent) {
+        const params = new URLSearchParams({ folder: action.sourceFolder, operationId });
+        await api(`/api/accounts/${action.accountId}/messages/${encodeURIComponent(String(action.uid))}?${params}`, { method: "DELETE" });
+      } else {
+        await api(`/api/accounts/${action.accountId}/messages/${encodeURIComponent(String(action.uid))}/move`, {
+          method: "POST",
+          body: JSON.stringify({ folder: action.sourceFolder, targetFolder: action.targetFolder, operationId }),
+        });
+      }
+      completeOperation(operationKey);
       if (selectedAccountId === action.accountId && selectedFolder === action.sourceFolder) {
         setMessages((current) => current.filter((message) => message.uid !== action.uid));
         setMessageTotal((total) => Math.max(0, total - 1));
@@ -568,57 +642,102 @@ function App() {
     }
   };
 
+  const toggleSelectedMessageRead = async () => {
+    if (!selectedMessage) return;
+    const summary = messages.find((message) => message.uid === selectedMessage.uid);
+    const read = Boolean(summary?.unread);
+    setMessageActionLoading(true);
+    try {
+      const updated = await updateMessageReadState(selectedMessage.uid, read, "更新已读状态失败");
+      if (updated) notify(read ? "邮件已标记为已读" : "邮件已标记为未读");
+    } finally {
+      setMessageActionLoading(false);
+    }
+  };
+
   const toggleSelectedMessageFlag = async () => {
     if (!selectedAccountId || !selectedMessage) return;
     const summary = messages.find((message) => message.uid === selectedMessage.uid);
     const flagged = !summary?.flagged;
     setMessageActionLoading(true);
+    setMessages((current) => current.map((message) => message.uid === selectedMessage.uid ? { ...message, flagged } : message));
     try {
+      const operationKey = `flag:${selectedAccountId}:${selectedFolder}:${String(selectedMessage.uid)}:${flagged}`;
+      const operationId = operationIdFor(operationKey);
       await api(`/api/accounts/${selectedAccountId}/messages/${encodeURIComponent(String(selectedMessage.uid))}/flag`, {
         method: "PATCH",
-        body: JSON.stringify({ folder: selectedFolder, flagged }),
+        body: JSON.stringify({ folder: selectedFolder, flagged, operationId }),
       });
-      setMessages((current) => current.map((message) => message.uid === selectedMessage.uid ? { ...message, flagged } : message));
+      completeOperation(operationKey);
       notify(flagged ? "邮件已收藏" : "已取消收藏");
     } catch (error) {
+      setMessages((current) => current.map((message) => message.uid === selectedMessage.uid ? { ...message, flagged: !flagged } : message));
       notify(error instanceof Error ? error.message : "收藏操作失败", "error");
     } finally {
       setMessageActionLoading(false);
     }
   };
 
-  const sendMailInBackground = async (draft: { accountId: number; to: string; cc: string; bcc: string; subject: string; text: string; html: string; attachments: ComposeAttachment[] }) => {
-    const account = accounts.find((item) => item.id === draft.accountId);
-    if (!account) {
-      notify("邮箱账号不存在", "error");
-      return;
-    }
-    const pending: PendingSend = {
-      id: `${Date.now()}-${Math.random()}`,
-      accountId: draft.accountId,
-      from: account.email,
-      to: draft.to,
-      subject: draft.subject,
-      createdAt: new Date().toISOString(),
-      status: "sending",
-    };
-    setPendingSends((current) => [pending, ...current]);
-    setSelectedAccountId(draft.accountId);
-    navigateTo("sent", { replace: true });
-    try {
-      await api(`/api/accounts/${draft.accountId}/send`, {
-        method: "POST",
-        body: JSON.stringify({ to: draft.to, cc: draft.cc, bcc: draft.bcc, subject: draft.subject, text: draft.text, html: draft.html, attachments: draft.attachments }),
-      });
-      setPendingSends((current) => current.filter((item) => item.id !== pending.id));
-      setMessageReloadVersion((value) => value + 1);
-      notify("邮件已发送");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "发送失败";
-      setPendingSends((current) => current.map((item) => item.id === pending.id ? { ...item, status: "failed", error: message } : item));
-      notify(message, "error");
-    }
-  };
+	const executePendingSend = async (pending: PendingSend) => {
+		if (!pending.draft || pendingSendBusyRef.current.has(pending.id)) return;
+		pendingSendBusyRef.current.add(pending.id);
+		const sending: PendingSend = { ...pending, status: "sending", attempts: pending.attempts + 1, updatedAt: new Date().toISOString(), error: undefined, requiresAuthorization: undefined };
+		setPendingSends((current) => current.map((item) => item.id === pending.id ? sending : item));
+		try {
+			await api(`/api/accounts/${pending.accountId}/send`, {
+				method: "POST",
+				body: JSON.stringify({ ...pending.draft, operationId: pending.id }),
+			});
+			const sent: PendingSend = { ...sending, status: "sent", updatedAt: new Date().toISOString(), draft: undefined };
+			setPendingSends((current) => current.map((item) => item.id === pending.id ? sent : item));
+			setMessageReloadVersion((value) => value + 1);
+			notify("邮件已发送");
+		} catch (error) {
+			const message = error instanceof Error ? error.message : "发送失败";
+			setPendingSends((current) => current.map((item) => item.id === pending.id ? { ...sending, status: "failed", updatedAt: new Date().toISOString(), error: message, requiresAuthorization: sendRequiresAuthorization(error) } : item));
+			notify(message, "error");
+		} finally {
+			pendingSendBusyRef.current.delete(pending.id);
+		}
+	};
+
+	const sendMailInBackground = async (draft: SendDraft): Promise<boolean> => {
+		const account = accounts.find((item) => item.id === draft.accountId);
+		if (!account) {
+			notify("邮箱账号不存在", "error");
+			return false;
+		}
+		const now = new Date().toISOString();
+		const pending: PendingSend = {
+			id: createOperationId(),
+			accountId: draft.accountId,
+			from: account.email,
+			to: draft.to,
+			subject: draft.subject,
+			createdAt: now,
+			updatedAt: now,
+			status: "queued",
+			attempts: 0,
+			draft,
+		};
+		setPendingSends((current) => [pending, ...current]);
+		setSelectedAccountId(draft.accountId);
+		navigateTo("sent", { replace: true });
+		void executePendingSend(pending);
+		return true;
+	};
+
+	const retryPendingSend = (pending: PendingSend) => {
+		if (pending.draft) void executePendingSend({ ...pending, status: "queued", updatedAt: new Date().toISOString() });
+	};
+
+	const authorizePendingSend = (pending: PendingSend) => {
+		const account = accounts.find((item) => item.id === pending.accountId) || null;
+		if (!account) return;
+		setSelectedAccountId(account.id);
+		setOauthAccount(account);
+		navigateTo("oauth");
+	};
 
   const openFolder = (folder: (typeof visibleFolders)[number]) => {
     if (!folder.available) return;
@@ -770,12 +889,15 @@ function App() {
               selectedMessage={selectedMessage}
               folderRoute={selectedFolderRoute}
               actionLoading={messageActionLoading}
-              pendingSends={selectedFolderRoute === "sent" && selectedAccountId ? pendingSends.filter((item) => item.accountId === selectedAccountId) : []}
+				pendingSends={selectedFolderRoute === "sent" && selectedAccountId ? pendingSends.filter((item) => item.accountId === selectedAccountId) : []}
+				retryPendingSend={retryPendingSend}
+				authorizePendingSend={authorizePendingSend}
               closeMessage={() => setSelectedMessage(null)}
               openMessage={openMessage}
               requestMoveMessage={(message, targetRoute) => requestMessageMove(message.uid, message.subject, targetRoute)}
               archiveMessage={() => { if (selectedMessage) requestMessageMove(selectedMessage.uid, selectedMessage.subject, "archive"); }}
               deleteMessage={() => { if (selectedMessage) requestMessageMove(selectedMessage.uid, selectedMessage.subject, "trash"); }}
+              toggleRead={() => void toggleSelectedMessageRead()}
               toggleFlag={() => void toggleSelectedMessageFlag()}
               reload={loadMessages}
               openImport={() => navigateTo("import")}
@@ -1071,12 +1193,15 @@ function InboxPage(props: {
   selectedMessage: MessageDetail | null;
   folderRoute: FolderRoute;
   actionLoading: boolean;
-  pendingSends: PendingSend[];
+	pendingSends: PendingSend[];
+	retryPendingSend: (pending: PendingSend) => void;
+	authorizePendingSend: (pending: PendingSend) => void;
   closeMessage: () => void;
   openMessage: (message: MessageSummary) => void;
   requestMoveMessage: (message: MessageSummary, targetRoute: "archive" | "trash") => void;
   archiveMessage: () => void;
   deleteMessage: () => void;
+  toggleRead: () => void;
   toggleFlag: () => void;
   reload: () => void;
   openImport: () => void;
@@ -1249,16 +1374,20 @@ function InboxPage(props: {
         <div className="message-column" ref={messageColumnRef}>
           <div className="column-head"><div className="column-title"><strong>{t("邮件列表")}</strong><span className="column-mailbox-meta"><span title={props.account?.email}>{props.account?.email}</span><button type="button" className={mailboxCopied ? "copied" : ""} onClick={() => void copyCurrentMailbox()} aria-label={t(mailboxCopied ? "已复制邮箱" : "复制邮箱")} title={t(mailboxCopied ? "已复制邮箱" : "复制邮箱")}>{mailboxCopied ? <Check size={13} /> : <Copy size={13} />}</button><em>{props.total + props.pendingSends.length} {t("封邮件")}</em></span></div><div className="column-actions"><button disabled={props.fontScale <= 0.9} onClick={() => props.setFontScale((value) => Math.max(0.9, Number((value - 0.1).toFixed(1))))} aria-label={t("减小邮件列表字号")}><Minus size={15} /></button><span className="font-scale-label">{Math.round(props.fontScale * 100)}%</span><button disabled={props.fontScale >= 1.4} onClick={() => props.setFontScale((value) => Math.min(1.4, Number((value + 0.1).toFixed(1))))} aria-label={t("增大邮件列表字号")}><Plus size={15} /></button><button onClick={props.reload} aria-label={t("同步")}><RefreshCw size={16} /></button></div></div>
           <div className="message-list">
-            {props.pendingSends.map((pending) => (
-              <div className={`message-row pending-send-row ${pending.status}`} key={pending.id}>
-                <span className="message-state sending" aria-label={t("发送中…")}><Send size={17} /></span>
-                <strong className="message-sender">{mailboxAddresses(pending.to)}</strong>
-                <span className="message-summary-line">
-                  <strong>{pending.subject || t("邮件主题")}</strong>
-                  <small>{pending.status === "sending" ? t("发送中…") : `${t("发送失败")}：${pending.error || t("发送失败")}`}</small>
-                </span>
-                <time className="message-time">{messageListDate(pending.createdAt, language === "en" ? "en-US" : "zh-CN")}</time>
-                <Star className="row-star" size={16} />
+			{props.pendingSends.map((pending) => (
+				<div className={`message-row pending-send-row ${pending.status}`} key={pending.id}>
+					<span className={`message-state ${pending.status}`} aria-label={t(pending.status === "queued" ? "排队中" : pending.status === "sending" ? "发送中…" : pending.status === "sent" ? "已发送" : "发送失败")}>
+						{pending.status === "sent" ? <CheckCircle2 size={17} /> : pending.status === "failed" ? <CircleAlert size={17} /> : <Send size={17} />}
+					</span>
+					<strong className="message-sender">{mailboxAddresses(pending.to)}</strong>
+					<span className="message-summary-line">
+						<strong>{pending.subject || t("邮件主题")}</strong>
+						<small>{pending.status === "queued" ? t("排队中") : pending.status === "sending" ? t("发送中…") : pending.status === "sent" ? t("已发送") : `${t("发送失败")}：${pending.error || t("发送失败")}`}</small>
+					</span>
+					<time className="message-time">{messageListDate(pending.createdAt, language === "en" ? "en-US" : "zh-CN")}</time>
+					{pending.status === "failed" && pending.draft
+						? <button type="button" className="pending-send-retry" onClick={() => pending.requiresAuthorization ? props.authorizePendingSend(pending) : props.retryPendingSend(pending)}>{t(pending.requiresAuthorization ? "重新授权" : "重试发送")}</button>
+						: <Star className="row-star" size={16} />}
                 <i className="pending-send-progress" aria-hidden="true" />
               </div>
             ))}
@@ -1353,12 +1482,14 @@ function InboxPage(props: {
           {!props.detailLoading && props.selectedMessage && (
             <MessageReader
               message={props.selectedMessage}
+              unread={Boolean(props.messages.find((message) => message.uid === props.selectedMessage?.uid)?.unread)}
               flagged={Boolean(props.messages.find((message) => message.uid === props.selectedMessage?.uid)?.flagged)}
               canArchive={props.folderRoute !== "archive"}
               actionLoading={props.actionLoading}
               onClose={props.closeMessage}
               onArchive={props.archiveMessage}
               onDelete={props.deleteMessage}
+              onToggleRead={props.toggleRead}
               onToggleFlag={props.toggleFlag}
             />
           )}
@@ -1369,21 +1500,25 @@ function InboxPage(props: {
 
 function MessageReader({
   message,
+  unread,
   flagged,
   canArchive,
   actionLoading,
   onClose,
   onArchive,
   onDelete,
+  onToggleRead,
   onToggleFlag,
 }: {
   message: MessageDetail;
+  unread: boolean;
   flagged: boolean;
   canArchive: boolean;
   actionLoading: boolean;
   onClose: () => void;
   onArchive: () => void;
   onDelete: () => void;
+  onToggleRead: () => void;
   onToggleFlag: () => void;
 }) {
   const { language, t } = useI18n();
@@ -1417,7 +1552,7 @@ function MessageReader({
   return (
     <>
       <div className="reader-head">
-        <div className="reader-tools"><button className="reader-back" onClick={onClose} aria-label={t("返回邮件列表")}><ArrowLeft size={16} /></button><span className="reader-tool-spacer" /><button disabled={!canArchive || actionLoading} onClick={onArchive} aria-label={t("归档")} title={t("归档")}><Archive size={16} /></button><button disabled={actionLoading} onClick={onDelete} aria-label={t("删除")} title={t("删除")}><Trash2 size={16} /></button><button className={flagged ? "flagged" : ""} disabled={actionLoading} onClick={onToggleFlag} aria-label={t(flagged ? "取消收藏" : "收藏")} title={t(flagged ? "取消收藏" : "收藏")}><Star size={16} /></button></div>
+        <div className="reader-tools"><button className="reader-back" onClick={onClose} aria-label={t("返回邮件列表")}><ArrowLeft size={16} /></button><span className="reader-tool-spacer" /><button disabled={actionLoading} onClick={onToggleRead} aria-label={t(unread ? "标记为已读" : "标记为未读")} title={t(unread ? "标记为已读" : "标记为未读")}>{unread ? <MailOpen size={16} /> : <Mail size={16} />}</button><button disabled={!canArchive || actionLoading} onClick={onArchive} aria-label={t("归档")} title={t("归档")}><Archive size={16} /></button><button disabled={actionLoading} onClick={onDelete} aria-label={t("删除")} title={t("删除")}><Trash2 size={16} /></button><button className={flagged ? "flagged" : ""} disabled={actionLoading} onClick={onToggleFlag} aria-label={t(flagged ? "取消收藏" : "收藏")} title={t(flagged ? "取消收藏" : "收藏")}><Star size={16} /></button></div>
         <h2>{message.subject}</h2>
         <div className="reader-sender"><span className="sender-avatar large">{initials(message.from)}</span><div><strong>{message.from}</strong><span>{t("发送给 {to}", { to: message.to || "me" })}</span></div><time>{formatDate(message.date, true, language === "en" ? "en-US" : "zh-CN")}</time></div>
       </div>
@@ -1441,24 +1576,26 @@ function MessageMoveConfirmDialog({
   const { t } = useI18n();
   if (!action) return null;
   const deleting = action.targetRoute === "trash";
+  const permanent = deleting && action.sourceRoute === "trash";
+  const title = permanent ? "确认永久删除邮件" : deleting ? "确认移到已删除" : "确认归档邮件";
   return (
     <div className="message-action-backdrop" onMouseDown={onClose}>
       <section
         className="message-action-sheet"
         role="dialog"
         aria-modal="true"
-        aria-label={t(deleting ? "确认删除邮件" : "确认归档邮件")}
+        aria-label={t(title)}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="message-action-copy">
           <div className="message-action-title">
             <span className={deleting ? "danger" : "success"}>{deleting ? <Trash2 size={18} /> : <Archive size={18} />}</span>
-            <h2>{t(deleting ? "确认删除邮件" : "确认归档邮件")}</h2>
+            <h2>{t(title)}</h2>
           </div>
           <strong>{action.subject}</strong>
         </div>
         <button className={`message-action-option ${deleting ? "danger" : "success"}`} disabled={loading} onClick={onConfirm}>
-          {loading ? t("处理中…") : t(deleting ? "删除" : "归档")}
+          {loading ? t("处理中…") : t(permanent ? "永久删除" : deleting ? "移到已删除" : "归档")}
         </button>
         <button className="message-action-option cancel" disabled={loading} onClick={onClose}>{t("取消")}</button>
       </section>

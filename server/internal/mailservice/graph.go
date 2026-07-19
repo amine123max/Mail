@@ -435,9 +435,6 @@ func (s *Service) graphGetMessage(ctx context.Context, account *model.AccountCre
 			}
 		}
 	}
-	if !message.IsRead {
-		_ = s.graphRequest(ctx, accessToken, http.MethodPatch, "messages/"+url.PathEscape(id), map[string]any{"isRead": true}, nil)
-	}
 	htmlBody, textBody := "", message.Body.Content
 	if strings.EqualFold(message.Body.ContentType, "html") {
 		htmlBody = s.renderMessageHTML(ctx, message.Body.Content, inlineImages)
@@ -455,16 +452,29 @@ func (s *Service) graphGetMessage(ctx context.Context, account *model.AccountCre
 	return MessageDetail{UID: "graph:" + message.ID, Subject: fallbackSubject(message.Subject), From: formatGraphAddress(from), To: formatGraphRecipients(message.ToRecipients), CC: formatGraphRecipients(message.CCRecipients), Date: isoDate(date), HTML: htmlBody, Text: textBody, Attachments: attachments}, nil
 }
 
+func (s *Service) graphSetRead(ctx context.Context, account *model.AccountCredentials, accessToken, uid string, read bool) error {
+	id := strings.TrimPrefix(uid, "graph:")
+	if err := s.graphRequest(ctx, accessToken, http.MethodPatch, "messages/"+url.PathEscape(id), map[string]any{"isRead": read}, nil); err != nil {
+		return err
+	}
+	return s.store.MarkAccountSynced(ctx, account.OwnerKey, account.ID)
+}
+
 func (s *Service) graphMoveMessage(ctx context.Context, account *model.AccountCredentials, accessToken, folder, uid, target string) error {
 	id := strings.TrimPrefix(uid, "graph:")
 	if graphFolder(folder) == graphFolder(target) {
-		if err := s.graphRequest(ctx, accessToken, http.MethodDelete, "messages/"+url.PathEscape(id), nil, nil); err != nil {
-			return err
-		}
-	} else {
-		if err := s.graphRequest(ctx, accessToken, http.MethodPost, "messages/"+url.PathEscape(id)+"/move", map[string]any{"destinationId": graphFolder(target)}, nil); err != nil {
-			return err
-		}
+		return s.graphDeleteMessage(ctx, account, accessToken, uid)
+	}
+	if err := s.graphRequest(ctx, accessToken, http.MethodPost, "messages/"+url.PathEscape(id)+"/move", map[string]any{"destinationId": graphFolder(target)}, nil); err != nil {
+		return err
+	}
+	return s.store.MarkAccountSynced(ctx, account.OwnerKey, account.ID)
+}
+
+func (s *Service) graphDeleteMessage(ctx context.Context, account *model.AccountCredentials, accessToken, uid string) error {
+	id := strings.TrimPrefix(uid, "graph:")
+	if err := s.graphRequest(ctx, accessToken, http.MethodDelete, "messages/"+url.PathEscape(id), nil, nil); err != nil {
+		return err
 	}
 	return s.store.MarkAccountSynced(ctx, account.OwnerKey, account.ID)
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -164,6 +165,57 @@ func TestDesktopSyncCursorIsolationAndAtomicLastSync(t *testing.T) {
 	loaded, err = storage.GetDesktopSyncCursor(ctx, "user:1", accountID, "INBOX", finalCursor)
 	if err != nil || loaded != nil {
 		t.Fatal("account deletion did not cascade to sync cursors")
+	}
+}
+
+func TestMailOperationClaimsAreOwnerScopedAndReplayCompletedResults(t *testing.T) {
+	storage := openTestStore(t)
+	ctx := context.Background()
+	claim, err := storage.ClaimMailOperation(ctx, "user:1", "operation-12345678", "flag", "hash-one")
+	if err != nil || claim != MailOperationClaimed {
+		t.Fatalf("initial operation claim failed: %q %v", claim, err)
+	}
+	if _, err := storage.ClaimMailOperation(ctx, "user:1", "operation-12345678", "flag", "hash-one"); !errors.Is(err, ErrMailOperationInProgress) {
+		t.Fatalf("parallel operation was not rejected: %v", err)
+	}
+	resultJSON := `{"status":"sent","accepted":["recipient@example.com"]}`
+	if err := storage.CompleteMailOperationWithResult(ctx, "user:1", "operation-12345678", resultJSON); err != nil {
+		t.Fatal(err)
+	}
+	storedResult, err := storage.MailOperationResult(ctx, "user:1", "operation-12345678")
+	if err != nil || storedResult != resultJSON {
+		t.Fatalf("completed operation result mismatch: %q %v", storedResult, err)
+	}
+	var encryptedResult string
+	if err := storage.DB().QueryRow(`SELECT result_encrypted FROM mail_operations WHERE owner_key='user:1' AND operation_id='operation-12345678'`).Scan(&encryptedResult); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(encryptedResult, "v1:") || strings.Contains(encryptedResult, "recipient@example.com") {
+		t.Fatal("mail operation result was not encrypted")
+	}
+	claim, err = storage.ClaimMailOperation(ctx, "user:1", "operation-12345678", "flag", "hash-one")
+	if err != nil || claim != MailOperationCompleted {
+		t.Fatalf("completed operation was not replayed: %q %v", claim, err)
+	}
+	if _, err := storage.ClaimMailOperation(ctx, "user:1", "operation-12345678", "flag", "different-hash"); !errors.Is(err, ErrMailOperationConflict) {
+		t.Fatalf("operation id reuse was not rejected: %v", err)
+	}
+	claim, err = storage.ClaimMailOperation(ctx, "user:2", "operation-12345678", "flag", "hash-one")
+	if err != nil || claim != MailOperationClaimed {
+		t.Fatalf("operation claim leaked across owners: %q %v", claim, err)
+	}
+	if err := storage.StartMailOperation(ctx, "user:2", "operation-12345678"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := storage.ClaimMailOperation(ctx, "user:2", "operation-12345678", "flag", "hash-one"); !errors.Is(err, ErrMailOperationInProgress) {
+		t.Fatalf("running operation was not locked: %v", err)
+	}
+	if err := storage.ReleaseMailOperation(ctx, "user:2", "operation-12345678"); err != nil {
+		t.Fatal(err)
+	}
+	claim, err = storage.ClaimMailOperation(ctx, "user:2", "operation-12345678", "flag", "hash-one")
+	if err != nil || claim != MailOperationClaimed {
+		t.Fatalf("released operation could not be retried: %q %v", claim, err)
 	}
 }
 

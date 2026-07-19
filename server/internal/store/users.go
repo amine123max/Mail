@@ -245,6 +245,9 @@ func (s *Store) DeleteGuestSession(ctx context.Context, id string) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM accounts WHERE owner_key=?", "guest:"+id); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM mail_operations WHERE owner_key=?", "guest:"+id); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM guest_sessions WHERE id=?", id); err != nil {
 		return err
 	}
@@ -274,6 +277,9 @@ func (s *Store) TransferGuestAccounts(ctx context.Context, guestID string, userI
 		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM accounts WHERE owner_key=?", guestOwner); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM mail_operations WHERE owner_key=?", guestOwner); err != nil {
 		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM guest_sessions WHERE id=?", guestID); err != nil {

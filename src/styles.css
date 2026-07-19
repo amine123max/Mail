@@ -236,17 +236,26 @@ button { color: inherit; }
 .message-swipe-shell.swiping-right .message-swipe-action.archive, .message-swipe-shell.swiping-left .message-swipe-action.delete { opacity: var(--swipe-progress); transform: scale(var(--swipe-scale)); }
 .pending-send-row { cursor: default; }
 .pending-send-row:hover { background: transparent; }
+.pending-send-row.queued .message-summary-line small { color: #d97706; }
 .pending-send-row.sending .message-summary-line small { color: #16a34a; }
+.pending-send-row.sent .message-summary-line small { color: #16a34a; }
 .pending-send-row.failed .message-summary-line small { color: var(--danger); }
 .pending-send-progress { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; overflow: hidden; background: color-mix(in srgb, #22c55e 14%, transparent); }
 .pending-send-progress::after { content: ""; position: absolute; inset: 0 auto 0 0; width: 38%; border-radius: 999px; background: linear-gradient(90deg, transparent, #22c55e 28%, #16a34a 72%, transparent); animation: send-progress 1.15s ease-in-out infinite; }
 .pending-send-row.failed .pending-send-progress { background: color-mix(in srgb, var(--danger) 18%, transparent); }
 .pending-send-row.failed .pending-send-progress::after { width: 100%; background: var(--danger); animation: none; }
+.pending-send-row.sent .pending-send-progress::after { width: 100%; background: #16a34a; animation: none; }
+.pending-send-row.queued .pending-send-progress::after { background: linear-gradient(90deg, transparent, #f59e0b 28%, #d97706 72%, transparent); }
 .message-state { width: 24px; height: 24px; display: grid; place-items: center; color: var(--muted-2); }
 .message-state.unread { color: #e5a50a; }
 .message-state.unread svg { fill: color-mix(in srgb, #f5c542 45%, transparent); }
 .message-state.read { color: #a1a1aa; }
 .message-state.sending { color: #16a34a; }
+.message-state.queued { color: #d97706; }
+.message-state.sent { color: #16a34a; }
+.message-state.failed { color: var(--danger); }
+.pending-send-retry { min-width: 54px; height: 25px; padding: 0 9px; border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--border)); border-radius: 7px; color: var(--danger); background: transparent; font-size: 9px; }
+.pending-send-retry:hover { background: color-mix(in srgb, var(--danger) 8%, transparent); }
 .message-sender { min-width: 0; overflow: hidden; color: var(--foreground); font-size: var(--mail-primary-size); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .message-summary-line { min-width: 0; display: flex; align-items: baseline; gap: 7px; overflow: hidden; }
 .message-summary-line strong { min-width: 0; flex: none; overflow: hidden; color: var(--foreground); font-size: var(--mail-primary-size); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }

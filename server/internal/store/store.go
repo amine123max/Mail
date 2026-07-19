@@ -148,6 +148,18 @@ func (s *Store) initialize(ctx context.Context) error {
 			FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
 		);
 
+		CREATE TABLE IF NOT EXISTS mail_operations (
+			owner_key TEXT NOT NULL,
+			operation_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			request_hash TEXT NOT NULL,
+			status TEXT NOT NULL,
+			result_encrypted TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(owner_key, operation_id)
+		);
+
 		CREATE INDEX IF NOT EXISTS idx_accounts_owner_sort ON accounts(owner_key, sort_order ASC, id DESC);
 		CREATE INDEX IF NOT EXISTS idx_guest_sessions_expiry ON guest_sessions(expires_at);
 		CREATE INDEX IF NOT EXISTS idx_user_sessions_expiry ON user_sessions(expires_at);
@@ -161,7 +173,23 @@ func (s *Store) initialize(ctx context.Context) error {
 		CREATE INDEX IF NOT EXISTS idx_announcement_reads_user ON announcement_reads(user_id, announcement_id);
 		CREATE INDEX IF NOT EXISTS idx_desktop_sync_cursors_scope ON desktop_sync_cursors(owner_key, account_id, folder, updated_at DESC);
 		CREATE INDEX IF NOT EXISTS idx_desktop_sync_cursors_expiry ON desktop_sync_cursors(updated_at);
+		CREATE INDEX IF NOT EXISTS idx_mail_operations_expiry ON mail_operations(updated_at);
 	`)
+	if err != nil {
+		return err
+	}
+	return s.migrateMailOperations(ctx)
+}
+
+func (s *Store) migrateMailOperations(ctx context.Context) error {
+	columns, err := tableColumns(ctx, s.db, "mail_operations")
+	if err != nil {
+		return err
+	}
+	if columns["result_encrypted"] {
+		return nil
+	}
+	_, err = s.db.ExecContext(ctx, "ALTER TABLE mail_operations ADD COLUMN result_encrypted TEXT")
 	return err
 }
 

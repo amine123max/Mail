@@ -113,7 +113,7 @@ export function ComposePage({
   accounts: Account[];
   initialAccountId: number | null;
   onCancel: () => void;
-  onSend: (draft: { accountId: number; to: string; cc: string; bcc: string; subject: string; text: string; html: string; attachments: ComposeAttachment[] }) => void;
+	onSend: (draft: { accountId: number; to: string; cc: string; bcc: string; subject: string; text: string; html: string; attachments: ComposeAttachment[] }) => Promise<boolean>;
   notify: (message: string, type?: "success" | "error") => void;
 }) {
   const { language, t } = useI18n();
@@ -127,8 +127,9 @@ export function ComposePage({
   const [html, setHtml] = useState(initialDraft.html);
   const [attachments, setAttachments] = useState<ComposeAttachment[]>([]);
   const [ccOpen, setCcOpen] = useState(Boolean(initialDraft.cc));
-  const [bccOpen, setBccOpen] = useState(Boolean(initialDraft.bcc));
-  const [saved, setSaved] = useState(Boolean(initialDraft.to || initialDraft.subject || initialDraft.text));
+	const [bccOpen, setBccOpen] = useState(Boolean(initialDraft.bcc));
+	const [saved, setSaved] = useState(Boolean(initialDraft.to || initialDraft.subject || initialDraft.text));
+	const [submitting, setSubmitting] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [commandMenu, setCommandMenu] = useState<"attachment" | "large" | "settings" | null>(null);
   const [commandMenuPosition, setCommandMenuPosition] = useState({ left: 12, top: 60 });
@@ -245,12 +246,19 @@ export function ComposePage({
     notify(t("草稿已保存在此浏览器"));
   };
 
-  const send = () => {
-    if (!accountId || !canSend) return;
-    localStorage.removeItem(draftStorageKey);
-    setSaved(false);
-    onSend({ accountId, to: to.trim(), cc: cc.trim(), bcc: bcc.trim(), subject: subject.trim(), text, html, attachments });
-  };
+	const send = async () => {
+		if (!accountId || !canSend || submitting) return;
+		setSubmitting(true);
+		try {
+			const accepted = await onSend({ accountId, to: to.trim(), cc: cc.trim(), bcc: bcc.trim(), subject: subject.trim(), text, html, attachments });
+			if (accepted) {
+				localStorage.removeItem(draftStorageKey);
+				setSaved(false);
+			}
+		} finally {
+			setSubmitting(false);
+		}
+	};
 
   const insertLink = () => {
     const url = window.prompt(t("输入链接地址"), "https://");
@@ -352,7 +360,7 @@ export function ComposePage({
     <section className="compose-page">
       <header className="compose-command-bar">
         <button type="button" className="compose-back-button" onClick={onCancel} aria-label={t("返回收件箱")}><ArrowLeft size={18} /></button>
-        <button type="button" className="compose-primary-send" disabled={!canSend} onClick={send}><Send size={16} /> {t("发送")}</button>
+		<button type="button" className="compose-primary-send" disabled={!canSend || submitting} onClick={send}><Send size={16} /> {t(submitting ? "发送中…" : "发送")}</button>
         <button type="button" className="compose-command-button" onClick={() => setPreviewOpen(true)}><Eye size={16} /> {t("预览")}</button>
         <div className="compose-settings-menu">
           <button ref={attachmentButtonRef} type="button" className="compose-command-button" aria-expanded={commandMenu === "attachment"} onClick={() => toggleCommandMenu("attachment", attachmentButtonRef.current)}><Paperclip size={16} /> {t("附件")} <ChevronDown size={13} /></button>
