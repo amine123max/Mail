@@ -160,6 +160,17 @@ func (s *Store) initialize(ctx context.Context) error {
 			PRIMARY KEY(owner_key, operation_id)
 		);
 
+		CREATE TABLE IF NOT EXISTS desktop_attachment_uploads (
+			id TEXT PRIMARY KEY,
+			owner_key TEXT NOT NULL,
+			filename_encrypted TEXT NOT NULL,
+			content_type TEXT NOT NULL,
+			size INTEGER NOT NULL,
+			sha256 TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL
+		);
+
 		CREATE INDEX IF NOT EXISTS idx_accounts_owner_sort ON accounts(owner_key, sort_order ASC, id DESC);
 		CREATE INDEX IF NOT EXISTS idx_guest_sessions_expiry ON guest_sessions(expires_at);
 		CREATE INDEX IF NOT EXISTS idx_user_sessions_expiry ON user_sessions(expires_at);
@@ -174,6 +185,8 @@ func (s *Store) initialize(ctx context.Context) error {
 		CREATE INDEX IF NOT EXISTS idx_desktop_sync_cursors_scope ON desktop_sync_cursors(owner_key, account_id, folder, updated_at DESC);
 		CREATE INDEX IF NOT EXISTS idx_desktop_sync_cursors_expiry ON desktop_sync_cursors(updated_at);
 		CREATE INDEX IF NOT EXISTS idx_mail_operations_expiry ON mail_operations(updated_at);
+		CREATE INDEX IF NOT EXISTS idx_desktop_attachment_uploads_owner ON desktop_attachment_uploads(owner_key, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_desktop_attachment_uploads_expiry ON desktop_attachment_uploads(expires_at);
 	`)
 	if err != nil {
 		return err

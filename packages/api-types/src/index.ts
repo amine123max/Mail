@@ -37,6 +37,7 @@ export interface Announcement {
 }
 
 export interface MessageAttachment {
+  id: string;
   index: number;
   filename: string;
   contentType: string;

@@ -18,6 +18,7 @@ import (
 )
 
 type parsedAttachment struct {
+	ID          string
 	Filename    string
 	ContentType string
 	ContentID   string
@@ -52,14 +53,14 @@ func parseMIMEMessage(source []byte) (parsedMessage, error) {
 		result.Date = date
 	}
 	header := textproto.MIMEHeader(message.Header)
-	if err := walkMIMEPart(header, message.Body, &result); err != nil {
+	if err := walkMIMEPart(header, message.Body, &result, nil); err != nil {
 		return result, err
 	}
 	result.Text = strings.TrimSpace(result.Text)
 	return result, nil
 }
 
-func walkMIMEPart(header textproto.MIMEHeader, body io.Reader, result *parsedMessage) error {
+func walkMIMEPart(header textproto.MIMEHeader, body io.Reader, result *parsedMessage, path []int) error {
 	mediaType, parameters, err := mime.ParseMediaType(header.Get("Content-Type"))
 	if err != nil || mediaType == "" {
 		mediaType = "text/plain"
@@ -71,7 +72,7 @@ func walkMIMEPart(header textproto.MIMEHeader, body io.Reader, result *parsedMes
 			return nil
 		}
 		reader := multipart.NewReader(body, boundary)
-		for {
+		for index := 1; ; index++ {
 			part, err := reader.NextPart()
 			if err == io.EOF {
 				return nil
@@ -79,7 +80,8 @@ func walkMIMEPart(header textproto.MIMEHeader, body io.Reader, result *parsedMes
 			if err != nil {
 				return err
 			}
-			if err := walkMIMEPart(part.Header, part, result); err != nil {
+			partPath := append(append([]int(nil), path...), index)
+			if err := walkMIMEPart(part.Header, part, result, partPath); err != nil {
 				_ = part.Close()
 				return err
 			}
@@ -99,8 +101,11 @@ func walkMIMEPart(header textproto.MIMEHeader, body io.Reader, result *parsedMes
 	contentID := normalizeContentID(header.Get("Content-ID"))
 	attachment := strings.EqualFold(disposition, "attachment") || filename != "" || contentID != ""
 	if attachment {
+		if len(path) == 0 {
+			path = []int{1}
+		}
 		result.Attachments = append(result.Attachments, parsedAttachment{
-			Filename: filename, ContentType: mediaType, ContentID: contentID,
+			ID: stableMIMEAttachmentID(path), Filename: filename, ContentType: mediaType, ContentID: contentID,
 			Inline: strings.EqualFold(disposition, "inline") || contentID != "", Content: decoded,
 		})
 		return nil
@@ -165,7 +170,7 @@ func (s *Service) parsedDetail(ctx context.Context, uid any, parsed parsedMessag
 			inline[attachment.ContentID] = "data:" + attachment.ContentType + ";base64," + base64.StdEncoding.EncodeToString(attachment.Content)
 			continue
 		}
-		attachments = append(attachments, Attachment{Index: len(attachments), Filename: fallbackFilename(attachment.Filename, len(attachments)), ContentType: fallbackContentType(attachment.ContentType), Size: len(attachment.Content)})
+		attachments = append(attachments, Attachment{ID: attachment.ID, Index: len(attachments), Filename: fallbackFilename(attachment.Filename, len(attachments)), ContentType: fallbackContentType(attachment.ContentType), Size: len(attachment.Content)})
 	}
 	htmlBody := ""
 	if parsed.HTML != "" {

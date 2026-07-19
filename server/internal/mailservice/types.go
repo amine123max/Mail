@@ -1,6 +1,7 @@
 package mailservice
 
 import (
+	"io"
 	"net/http"
 	"time"
 
@@ -47,10 +48,19 @@ type MessageSummary struct {
 }
 
 type Attachment struct {
+	ID          string `json:"id"`
 	Index       int    `json:"index"`
 	Filename    string `json:"filename"`
 	ContentType string `json:"contentType"`
 	Size        int    `json:"size"`
+}
+
+type AttachmentContent struct {
+	ID          string
+	Filename    string
+	ContentType string
+	Size        int64
+	Body        io.ReadCloser
 }
 
 type MessageDetail struct {
@@ -68,8 +78,10 @@ type MessageDetail struct {
 type AttachmentInput struct {
 	Filename      string `json:"filename"`
 	ContentType   string `json:"contentType"`
-	ContentBase64 string `json:"contentBase64"`
+	ContentBase64 string `json:"contentBase64,omitempty"`
+	UploadID      string `json:"uploadId,omitempty"`
 	Size          int    `json:"size"`
+	ContentPath   string `json:"-"`
 }
 
 type SendRequest struct {

@@ -270,7 +270,11 @@ func TestCompletedSendOperationReplaysStoredResult(t *testing.T) {
 	accountID := int64(imported["accounts"].([]any)[0].(map[string]any)["id"].(float64))
 	operationID := "send-replay-operation-12345678"
 	body := mailservice.SendRequest{
-		To: "receiver@example.com", Subject: "idempotent send", Text: "hello", Attachments: []mailservice.AttachmentInput{}, OperationID: operationID,
+		To: "receiver@example.com", Subject: "idempotent send", Text: "hello",
+		Attachments: []mailservice.AttachmentInput{{
+			Filename: "report.pdf", ContentType: "application/pdf", UploadID: "995955c8-b4c0-4fde-bfc8-81f37cf976bb", Size: 1024,
+		}},
+		OperationID: operationID,
 	}
 	fingerprint, err := sendOperationFingerprint(body)
 	if err != nil {

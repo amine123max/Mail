@@ -286,15 +286,23 @@ func (s *Server) sendMessage(response http.ResponseWriter, request *http.Request
 	filenameInvalid := regexp.MustCompile(`[\x00-\x1f\x7f]`)
 	contentTypePattern := regexp.MustCompile(`^[\w.+-]+/[\w.+-]+$`)
 	totalBytes := 0
-	for index, attachment := range body.Attachments {
-		if strings.TrimSpace(attachment.Filename) == "" || len([]rune(attachment.Filename)) > 255 || filenameInvalid.MatchString(attachment.Filename) || !contentTypePattern.MatchString(attachment.ContentType) || attachment.Size < 1 || attachment.Size > 3*1024*1024 || len(attachment.ContentBase64) < 1 || len(attachment.ContentBase64) > 4_194_304 {
+	for index := range body.Attachments {
+		attachment := &body.Attachments[index]
+		attachment.Filename = strings.TrimSpace(attachment.Filename)
+		attachment.ContentType = strings.ToLower(strings.TrimSpace(attachment.ContentType))
+		attachment.UploadID = strings.TrimSpace(attachment.UploadID)
+		hasUpload := attachment.UploadID != ""
+		hasInlineContent := attachment.ContentBase64 != ""
+		if attachment.Filename == "" || len([]rune(attachment.Filename)) > 255 || filenameInvalid.MatchString(attachment.Filename) || !contentTypePattern.MatchString(attachment.ContentType) || attachment.Size < 1 || attachment.Size > 3*1024*1024 || hasUpload == hasInlineContent {
 			return sendValidation(fmt.Sprintf("attachments[%d]", index), "附件名称、类型、大小或内容不正确")
 		}
-		decoded, err := base64.StdEncoding.DecodeString(attachment.ContentBase64)
-		if err != nil || abs(len(decoded)-attachment.Size) > 2 {
-			return sendValidation(fmt.Sprintf("attachments[%d].size", index), "附件大小与内容不一致")
+		if hasUpload && (!validRequestID(attachment.UploadID) || len(attachment.UploadID) > 128) {
+			return sendValidation(fmt.Sprintf("attachments[%d].uploadId", index), "附件上传标识无效")
 		}
-		totalBytes += len(decoded)
+		if hasInlineContent && len(attachment.ContentBase64) > 4_194_304 {
+			return sendValidation(fmt.Sprintf("attachments[%d].contentBase64", index), "附件内容过大")
+		}
+		totalBytes += attachment.Size
 	}
 	if totalBytes > 3*1024*1024 {
 		return sendValidation("attachments", "附件总大小不能超过 3 MB")
@@ -319,6 +327,29 @@ func (s *Server) sendMessage(response http.ResponseWriter, request *http.Request
 		writeJSON(response, http.StatusCreated, replay)
 		return nil
 	}
+	stagedUploadIDs := make([]string, 0, len(body.Attachments))
+	for index := range body.Attachments {
+		attachment := &body.Attachments[index]
+		if attachment.UploadID != "" {
+			upload, filePath, err := s.desktopAttachmentUpload(request, attachment.UploadID)
+			if err != nil {
+				_ = s.store.ReleaseMailOperation(request.Context(), operation.ownerKey, operation.operationID)
+				return err
+			}
+			if upload.Filename != attachment.Filename || upload.ContentType != attachment.ContentType || upload.Size != int64(attachment.Size) {
+				_ = s.store.ReleaseMailOperation(request.Context(), operation.ownerKey, operation.operationID)
+				return apiFailure(http.StatusConflict, "ATTACHMENT_UPLOAD_MISMATCH", "附件上传信息不一致，请重新选择文件", map[string]any{"field": fmt.Sprintf("attachments[%d]", index)})
+			}
+			attachment.ContentPath = filePath
+			stagedUploadIDs = append(stagedUploadIDs, attachment.UploadID)
+			continue
+		}
+		decoded, err := base64.StdEncoding.DecodeString(attachment.ContentBase64)
+		if err != nil || abs(len(decoded)-attachment.Size) > 2 {
+			_ = s.store.ReleaseMailOperation(request.Context(), operation.ownerKey, operation.operationID)
+			return sendValidation(fmt.Sprintf("attachments[%d].size", index), "附件大小与内容不一致")
+		}
+	}
 	if err := s.store.StartMailOperation(request.Context(), operation.ownerKey, operation.operationID); err != nil {
 		return err
 	}
@@ -335,6 +366,7 @@ func (s *Server) sendMessage(response http.ResponseWriter, request *http.Request
 	if err := s.store.CompleteMailOperationWithResult(request.Context(), operation.ownerKey, operation.operationID, string(encoded)); err != nil {
 		return err
 	}
+	s.consumeDesktopAttachmentUploads(request.Context(), identityFrom(request).OwnerKey, stagedUploadIDs)
 	writeJSON(response, http.StatusCreated, payload)
 	return nil
 }

@@ -57,6 +57,42 @@ func TestOwnerIsolationAndEncryptedPersistence(t *testing.T) {
 	}
 }
 
+func TestDesktopAttachmentUploadMetadataIsEncryptedAndIsolated(t *testing.T) {
+	storage := openTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	upload := DesktopAttachmentUpload{
+		ID: "desktop-upload-12345678", OwnerKey: "user:1", Filename: "private-report.pdf",
+		ContentType: "application/pdf", Size: 512, SHA256: strings.Repeat("a", 64),
+		CreatedAt: now.Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano),
+	}
+	if err := storage.CreateDesktopAttachmentUpload(ctx, upload); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := storage.DesktopAttachmentUpload(ctx, "user:1", upload.ID)
+	if err != nil || loaded == nil || loaded.Filename != upload.Filename || loaded.Size != upload.Size {
+		t.Fatalf("attachment upload round trip failed: %#v %v", loaded, err)
+	}
+	foreign, err := storage.DesktopAttachmentUpload(ctx, "user:2", upload.ID)
+	if err != nil || foreign != nil {
+		t.Fatal("attachment upload leaked across owners")
+	}
+	var encrypted string
+	if err := storage.DB().QueryRow("SELECT filename_encrypted FROM desktop_attachment_uploads WHERE id = ?", upload.ID).Scan(&encrypted); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(encrypted, "v1:") || strings.Contains(encrypted, upload.Filename) {
+		t.Fatalf("attachment filename was not encrypted: %q", encrypted)
+	}
+	if _, err := storage.DeleteExpiredDesktopAttachmentUploads(ctx, now.Add(2*time.Hour).Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = storage.DesktopAttachmentUpload(ctx, "user:1", upload.ID)
+	if err != nil || loaded != nil {
+		t.Fatal("expired attachment upload was not deleted")
+	}
+}
+
 func TestGuestTransferAndBatchScope(t *testing.T) {
 	storage := openTestStore(t)
 	ctx := context.Background()

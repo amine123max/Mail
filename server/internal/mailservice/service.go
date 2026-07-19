@@ -112,6 +112,21 @@ func (s *Service) GetMessage(ctx context.Context, account *model.AccountCredenti
 	return MessageDetail{}, serviceError("此邮件来自 IMAP 列表，但 IMAP 当前不可用，请返回列表重新同步以切换 Graph 通道", "IMAP_RELOAD_REQUIRED", http.StatusConflict)
 }
 
+func (s *Service) GetAttachment(ctx context.Context, account *model.AccountCredentials, folder, uid, attachmentID string) (AttachmentContent, error) {
+	if strings.HasPrefix(folder, "graph:") || strings.HasPrefix(uid, "graph:") {
+		token, err := s.RefreshAccessToken(ctx, account, graphReadScope)
+		if err != nil {
+			return AttachmentContent{}, err
+		}
+		return s.graphGetAttachment(ctx, account, token.AccessToken, uid, attachmentID)
+	}
+	token, err := s.RefreshAccessToken(ctx, account, imapScope)
+	if err != nil {
+		return AttachmentContent{}, err
+	}
+	return s.imapGetAttachment(ctx, account, token.AccessToken, folder, uid, attachmentID)
+}
+
 func (s *Service) SetMessageRead(ctx context.Context, account *model.AccountCredentials, folder, uid string, read bool) error {
 	if strings.HasPrefix(folder, "graph:") || strings.HasPrefix(uid, "graph:") {
 		token, err := s.RefreshAccessToken(ctx, account, graphReadScope)

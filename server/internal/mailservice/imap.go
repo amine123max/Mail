@@ -3,9 +3,13 @@ package mailservice
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"io"
+	"mime/quotedprintable"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,6 +32,10 @@ func (client *xoauth2SASL) Start() (string, []byte, error) {
 func (client *xoauth2SASL) Next(_ []byte) ([]byte, error) { return []byte{}, nil }
 
 func (s *Service) connectIMAP(ctx context.Context, account *model.AccountCredentials, accessToken string) (*client.Client, error) {
+	return s.connectIMAPWithTimeout(ctx, account, accessToken, 30*time.Second)
+}
+
+func (s *Service) connectIMAPWithTimeout(ctx context.Context, account *model.AccountCredentials, accessToken string, timeout time.Duration) (*client.Client, error) {
 	var lastError error
 	authenticationFailed := false
 	for _, host := range s.cfg.IMAPHosts {
@@ -37,7 +45,7 @@ func (s *Service) connectIMAP(ctx context.Context, account *model.AccountCredent
 			lastError = err
 			continue
 		}
-		deadline := time.Now().Add(30 * time.Second)
+		deadline := time.Now().Add(timeout)
 		if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
 			deadline = contextDeadline
 		}
@@ -58,12 +66,21 @@ func (s *Service) connectIMAP(ctx context.Context, account *model.AccountCredent
 			lastError = err
 			continue
 		}
-		imapClient.Timeout = 30 * time.Second
+		imapClient.Timeout = timeout
 		authClient := &xoauth2SASL{username: account.Email, token: accessToken}
 		if err := imapClient.Authenticate(authClient); err != nil {
 			lastError = err
 			authenticationFailed = true
 			_ = imapClient.Terminate()
+			continue
+		}
+		deadline = time.Now().Add(timeout)
+		if contextDeadline, ok := ctx.Deadline(); ok && contextDeadline.Before(deadline) {
+			deadline = contextDeadline
+		}
+		if err := tlsConnection.SetDeadline(deadline); err != nil {
+			_ = imapClient.Terminate()
+			lastError = err
 			continue
 		}
 		return imapClient, nil
@@ -72,6 +89,163 @@ func (s *Service) connectIMAP(ctx context.Context, account *model.AccountCredent
 		return nil, serviceError("Outlook IMAP 授权已失效", "MAIL_AUTH_REQUIRED", http.StatusUnauthorized)
 	}
 	return nil, serviceError("无法连接 Outlook IMAP："+errorMessage(lastError), "IMAP_CONNECTION_FAILED", http.StatusBadGateway)
+}
+
+type imapAttachmentPart struct {
+	path        []int
+	index       int
+	filename    string
+	contentType string
+	encoding    string
+}
+
+type temporaryAttachmentFile struct {
+	*os.File
+	path string
+}
+
+func (file *temporaryAttachmentFile) Close() error {
+	err := file.File.Close()
+	if removeErr := os.Remove(file.path); err == nil && removeErr != nil && !os.IsNotExist(removeErr) {
+		err = removeErr
+	}
+	return err
+}
+
+func (s *Service) imapGetAttachment(ctx context.Context, account *model.AccountCredentials, token, folder, uid, attachmentID string) (AttachmentContent, error) {
+	numericUID, err := strconv.ParseUint(uid, 10, 32)
+	if err != nil || numericUID < 1 || !strings.HasPrefix(attachmentID, "mime:") || len(attachmentID) != 69 {
+		return AttachmentContent{}, serviceError("附件标识无效", "INVALID_ATTACHMENT_ID", http.StatusBadRequest)
+	}
+	connection, err := s.connectIMAPWithTimeout(ctx, account, token, 10*time.Minute)
+	if err != nil {
+		return AttachmentContent{}, err
+	}
+	defer connection.Logout()
+	if _, err := connection.Select(folder, true); err != nil {
+		return AttachmentContent{}, err
+	}
+	sequenceSet := new(imap.SeqSet)
+	sequenceSet.AddNum(uint32(numericUID))
+	structureMessages := make(chan *imap.Message, 1)
+	structureErrors := make(chan error, 1)
+	go func() {
+		structureErrors <- connection.UidFetch(sequenceSet, []imap.FetchItem{imap.FetchUid, imap.FetchBodyStructure}, structureMessages)
+	}()
+	var structure *imap.BodyStructure
+	for message := range structureMessages {
+		if message != nil {
+			structure = message.BodyStructure
+		}
+	}
+	if fetchErr := <-structureErrors; fetchErr != nil {
+		return AttachmentContent{}, fetchErr
+	}
+	if structure == nil {
+		return AttachmentContent{}, serviceError("邮件不存在或已被删除", "MESSAGE_NOT_FOUND", http.StatusNotFound)
+	}
+	var target *imapAttachmentPart
+	attachmentIndex := 0
+	structure.Walk(func(path []int, part *imap.BodyStructure) bool {
+		if target != nil || len(path) == 0 || part == nil {
+			return target == nil
+		}
+		filename, _ := part.Filename()
+		contentID := normalizeContentID(part.Id)
+		isAttachment := strings.EqualFold(part.Disposition, "attachment") || filename != "" || contentID != ""
+		if !isAttachment {
+			return true
+		}
+		currentIndex := attachmentIndex
+		attachmentIndex++
+		if stableMIMEAttachmentID(path) != attachmentID {
+			return true
+		}
+		contentType := strings.ToLower(strings.TrimSpace(part.MIMEType + "/" + part.MIMESubType))
+		target = &imapAttachmentPart{
+			path:        append([]int(nil), path...),
+			index:       currentIndex,
+			filename:    filename,
+			contentType: fallbackContentType(contentType),
+			encoding:    part.Encoding,
+		}
+		return false
+	})
+	if target == nil {
+		return AttachmentContent{}, serviceError("附件不存在或已被删除", "ATTACHMENT_NOT_FOUND", http.StatusNotFound)
+	}
+	tempDir := filepath.Join(s.cfg.DataDir, "attachment-tmp")
+	if err := os.MkdirAll(tempDir, 0o700); err != nil {
+		return AttachmentContent{}, err
+	}
+	tempFile, err := os.CreateTemp(tempDir, "download-*.part")
+	if err != nil {
+		return AttachmentContent{}, err
+	}
+	tempPath := tempFile.Name()
+	cleanup := func() {
+		tempFile.Close()
+		os.Remove(tempPath)
+	}
+	if err := tempFile.Chmod(0o600); err != nil {
+		cleanup()
+		return AttachmentContent{}, err
+	}
+	section := &imap.BodySectionName{BodyPartName: imap.BodyPartName{Path: target.path}, Peek: true}
+	bodyMessages := make(chan *imap.Message, 1)
+	bodyErrors := make(chan error, 1)
+	go func() {
+		bodyErrors <- connection.UidFetch(sequenceSet, []imap.FetchItem{imap.FetchUid, section.FetchItem()}, bodyMessages)
+	}()
+	message := <-bodyMessages
+	if message == nil {
+		if fetchErr := <-bodyErrors; fetchErr != nil {
+			cleanup()
+			return AttachmentContent{}, fetchErr
+		}
+		cleanup()
+		return AttachmentContent{}, serviceError("附件不存在或已被删除", "ATTACHMENT_NOT_FOUND", http.StatusNotFound)
+	}
+	body := message.GetBody(section)
+	if body == nil {
+		cleanup()
+		return AttachmentContent{}, serviceError("附件内容不可用", "ATTACHMENT_NOT_FOUND", http.StatusNotFound)
+	}
+	var decoded io.Reader = body
+	switch strings.ToLower(strings.TrimSpace(target.encoding)) {
+	case "base64":
+		decoded = base64.NewDecoder(base64.StdEncoding, body)
+	case "quoted-printable":
+		decoded = quotedprintable.NewReader(body)
+	}
+	written, copyErr := io.Copy(tempFile, io.LimitReader(decoded, MaxAttachmentDownloadBytes+1))
+	if copyErr != nil || written > MaxAttachmentDownloadBytes {
+		_ = connection.Terminate()
+		cleanup()
+		if copyErr != nil {
+			return AttachmentContent{}, copyErr
+		}
+		return AttachmentContent{}, serviceError("附件超过桌面端下载上限", "ATTACHMENT_TOO_LARGE", http.StatusRequestEntityTooLarge)
+	}
+	for range bodyMessages {
+	}
+	fetchErr := <-bodyErrors
+	if fetchErr != nil {
+		cleanup()
+		return AttachmentContent{}, fetchErr
+	}
+	if _, err := tempFile.Seek(0, io.SeekStart); err != nil {
+		cleanup()
+		return AttachmentContent{}, err
+	}
+	_ = s.store.MarkAccountSynced(ctx, account.OwnerKey, account.ID)
+	return AttachmentContent{
+		ID:          attachmentID,
+		Filename:    fallbackFilename(target.filename, target.index),
+		ContentType: target.contentType,
+		Size:        written,
+		Body:        &temporaryAttachmentFile{File: tempFile, path: tempPath},
+	}, nil
 }
 
 func (s *Service) imapFolders(ctx context.Context, account *model.AccountCredentials, token string) ([]Folder, error) {

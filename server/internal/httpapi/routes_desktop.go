@@ -13,7 +13,8 @@ const (
 	defaultDesktopLatestVersion  = "1.0.0"
 	maxDesktopJSONRequestBytes   = 5 << 20
 	maxDesktopJSONResponseBytes  = 10 << 20
-	maxDesktopAttachmentBytes    = 100 << 20
+	maxDesktopAttachmentUpload   = 3 << 20
+	maxDesktopAttachmentDownload = 100 << 20
 )
 
 func (s *Server) desktopCapabilities(response http.ResponseWriter, _ *http.Request) error {
@@ -43,14 +44,14 @@ func (s *Server) desktopCapabilities(response http.ResponseWriter, _ *http.Reque
 		Features: map[string]bool{
 			"deviceSessions":     true,
 			"incrementalSync":    true,
-			"attachmentDownload": false,
+			"attachmentDownload": true,
 			"maintenanceMode":    true,
 		},
 		Limits: desktopcontract.DesktopCapabilitiesLimits{
 			MaxJsonRequestBytes:        maxDesktopJSONRequestBytes,
 			MaxJsonResponseBytes:       maxDesktopJSONResponseBytes,
-			MaxAttachmentUploadBytes:   maxDesktopAttachmentBytes,
-			MaxAttachmentDownloadBytes: maxDesktopAttachmentBytes,
+			MaxAttachmentUploadBytes:   maxDesktopAttachmentUpload,
+			MaxAttachmentDownloadBytes: maxDesktopAttachmentDownload,
 		},
 		Sync: desktopcontract.DesktopSyncCapabilities{
 			ProtocolVersion: 1,

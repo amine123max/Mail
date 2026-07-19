@@ -82,6 +82,13 @@ func TestMIMEInlineImagesAndSanitization(t *testing.T) {
 	if len(detail.Attachments) != 1 || detail.Attachments[0].Filename != "note.txt" {
 		t.Fatalf("attachment mapping mismatch: %#v", detail.Attachments)
 	}
+	if !strings.HasPrefix(detail.Attachments[0].ID, "mime:") || len(detail.Attachments[0].ID) != 69 {
+		t.Fatalf("attachment stable ID mismatch: %#v", detail.Attachments[0])
+	}
+	parsedAgain, err := parseMIMEMessage([]byte(raw))
+	if err != nil || parsedAgain.Attachments[1].ID != parsed.Attachments[1].ID {
+		t.Fatalf("MIME attachment ID changed across parses: %#v %#v %v", parsed.Attachments, parsedAgain.Attachments, err)
+	}
 	unsafe := sanitizeMessageHTML(`<img src="https://tracker.example/a.png"><style>.x{background:url(https://tracker.example/x)}</style>`, nil)
 	if strings.Contains(unsafe, "tracker.example") || strings.Contains(unsafe, "https://") {
 		t.Fatalf("sanitizer preserved a remote resource: %s", unsafe)
@@ -249,6 +256,50 @@ func TestGraphMessageReadStateIsExplicit(t *testing.T) {
 	}
 	if len(requests) != 3 || !strings.HasPrefix(requests[2], "DELETE ") {
 		t.Fatalf("explicit permanent-delete request mismatch: %#v", requests)
+	}
+}
+
+func TestGraphAttachmentUsesStableIDAndStreamsValue(t *testing.T) {
+	dataDir := t.TempDir()
+	box, err := secure.New(dataDir, strings.Repeat("08", 32), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage, err := store.Open(dataDir, box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	requests := make([]string, 0, 2)
+	service := &Service{store: storage, httpClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requests = append(requests, request.URL.Path)
+		if request.Header.Get("Authorization") != "Bearer graph-token" {
+			t.Fatalf("missing Graph authorization: %q", request.Header.Get("Authorization"))
+		}
+		if strings.HasSuffix(request.URL.Path, "/$value") {
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Length": []string{"18"}}, ContentLength: 18, Body: io.NopCloser(strings.NewReader("attachment-content"))}, nil
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"id":"raw-attachment-id","name":"report.txt","contentType":"text/plain","size":18,"isInline":false}`))}, nil
+	})}}
+	publicID := graphAttachmentID("raw-attachment-id")
+	decodedID, ok := decodeGraphAttachmentID(publicID)
+	if !ok || decodedID != "raw-attachment-id" {
+		t.Fatalf("Graph attachment ID round trip failed: %q %q", publicID, decodedID)
+	}
+	content, err := service.graphGetAttachment(context.Background(), &model.AccountCredentials{ID: 99, OwnerKey: "user:1"}, "graph-token", "graph:message-id", publicID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer content.Body.Close()
+	payload, err := io.ReadAll(content.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != "attachment-content" || content.Filename != "report.txt" || content.ContentType != "text/plain" || content.Size != 18 {
+		t.Fatalf("Graph attachment mismatch: %#v %q", content, payload)
+	}
+	if len(requests) != 2 || !strings.HasSuffix(requests[1], "/$value") {
+		t.Fatalf("Graph attachment requests mismatch: %#v", requests)
 	}
 }
 

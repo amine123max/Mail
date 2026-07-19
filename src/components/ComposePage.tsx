@@ -44,7 +44,8 @@ import { useI18n } from "../i18n";
 export type ComposeAttachment = {
   filename: string;
   contentType: string;
-  contentBase64: string;
+  contentBase64?: string;
+  uploadId?: string;
   size: number;
 };
 
@@ -108,12 +109,16 @@ export function ComposePage({
   initialAccountId,
   onCancel,
   onSend,
+  onSelectAttachments,
+  onReleaseAttachment,
   notify,
 }: {
   accounts: Account[];
   initialAccountId: number | null;
   onCancel: () => void;
 	onSend: (draft: { accountId: number; to: string; cc: string; bcc: string; subject: string; text: string; html: string; attachments: ComposeAttachment[] }) => Promise<boolean>;
+  onSelectAttachments?: (request: { existingCount: number; existingBytes: number; imagesOnly: boolean }) => Promise<ComposeAttachment[]>;
+  onReleaseAttachment?: (attachment: ComposeAttachment) => Promise<void>;
   notify: (message: string, type?: "success" | "error") => void;
 }) {
   const { language, t } = useI18n();
@@ -130,6 +135,7 @@ export function ComposePage({
 	const [bccOpen, setBccOpen] = useState(Boolean(initialDraft.bcc));
 	const [saved, setSaved] = useState(Boolean(initialDraft.to || initialDraft.subject || initialDraft.text));
 	const [submitting, setSubmitting] = useState(false);
+  const [attachmentSelecting, setAttachmentSelecting] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [commandMenu, setCommandMenu] = useState<"attachment" | "large" | "settings" | null>(null);
   const [commandMenuPosition, setCommandMenuPosition] = useState({ left: 12, top: 60 });
@@ -155,6 +161,9 @@ export function ComposePage({
   const insertMoreButtonRef = useRef<HTMLButtonElement | null>(null);
   const fontFamilyRef = useRef<HTMLSpanElement | null>(null);
   const fontSizeRef = useRef<HTMLSpanElement | null>(null);
+  const attachmentsRef = useRef<ComposeAttachment[]>([]);
+  const releaseAttachmentRef = useRef(onReleaseAttachment);
+  const submittedRef = useRef(false);
   const selectedAccount = accounts.find((account) => account.id === accountId) || null;
   const canSend = Boolean(accountId && to.trim() && text.trim());
 
@@ -162,6 +171,21 @@ export function ComposePage({
     if (accountId && accounts.some((account) => account.id === accountId)) return;
     setAccountId(initialAccountId || accounts[0]?.id || null);
   }, [accountId, accounts, initialAccountId]);
+
+  useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  useEffect(() => {
+    releaseAttachmentRef.current = onReleaseAttachment;
+  }, [onReleaseAttachment]);
+
+  useEffect(() => () => {
+    if (submittedRef.current) return;
+    for (const attachment of attachmentsRef.current) {
+      if (attachment.uploadId) void releaseAttachmentRef.current?.(attachment);
+    }
+  }, []);
 
   useEffect(() => {
     if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current);
@@ -234,10 +258,59 @@ export function ComposePage({
     }
     try {
       const nextAttachments = await Promise.all(incoming.map(readAttachment));
-      setAttachments((current) => [...current, ...nextAttachments]);
+      setAttachments((current) => {
+        const next = [...current, ...nextAttachments];
+        attachmentsRef.current = next;
+        return next;
+      });
     } catch (error) {
       notify(error instanceof Error ? error.message : t("附件读取失败"), "error");
     }
+  };
+
+  const chooseAttachments = async (imagesOnly: boolean) => {
+    if (!onSelectAttachments) {
+      (imagesOnly ? imageInputRef : attachmentInputRef).current?.click();
+      return;
+    }
+    if (attachmentSelecting) return;
+    setAttachmentSelecting(true);
+    try {
+      const currentSize = attachments.reduce((sum, item) => sum + item.size, 0);
+      const selected = await onSelectAttachments({
+        existingCount: attachments.length,
+        existingBytes: currentSize,
+        imagesOnly,
+      });
+      if (!selected.length) return;
+      const selectedSize = selected.reduce((sum, item) => sum + item.size, 0);
+      if (attachments.length + selected.length > 5 || currentSize + selectedSize > maxAttachmentBytes) {
+        for (const attachment of selected) {
+          if (attachment.uploadId) void onReleaseAttachment?.(attachment);
+        }
+        notify(t("附件最多 5 个且总大小不能超过 3 MB"), "error");
+        return;
+      }
+      setAttachments((current) => {
+        const next = [...current, ...selected];
+        attachmentsRef.current = next;
+        return next;
+      });
+    } catch (error) {
+      notify(error instanceof Error ? error.message : t("附件读取失败"), "error");
+    } finally {
+      setAttachmentSelecting(false);
+    }
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments((current) => {
+      const attachment = current[index];
+      const next = current.filter((_, itemIndex) => itemIndex !== index);
+      attachmentsRef.current = next;
+      if (attachment?.uploadId) void onReleaseAttachment?.(attachment);
+      return next;
+    });
   };
 
   const saveDraft = () => {
@@ -252,6 +325,7 @@ export function ComposePage({
 		try {
 			const accepted = await onSend({ accountId, to: to.trim(), cc: cc.trim(), bcc: bcc.trim(), subject: subject.trim(), text, html, attachments });
 			if (accepted) {
+				submittedRef.current = true;
 				localStorage.removeItem(draftStorageKey);
 				setSaved(false);
 			}
@@ -364,7 +438,7 @@ export function ComposePage({
         <button type="button" className="compose-command-button" onClick={() => setPreviewOpen(true)}><Eye size={16} /> {t("预览")}</button>
         <div className="compose-settings-menu">
           <button ref={attachmentButtonRef} type="button" className="compose-command-button" aria-expanded={commandMenu === "attachment"} onClick={() => toggleCommandMenu("attachment", attachmentButtonRef.current)}><Paperclip size={16} /> {t("附件")} <ChevronDown size={13} /></button>
-          {commandMenu === "attachment" && <><button className="compose-menu-dismiss" aria-label={t("关闭")} onClick={() => setCommandMenu(null)} /><div className="compose-command-popover" style={commandMenuPosition}><button type="button" onClick={() => { setCommandMenu(null); attachmentInputRef.current?.click(); }}><Paperclip size={15} /><span><strong>{t("选择本地附件")}</strong><small>{t("最多 5 个，总计 3 MB")}</small></span></button><button type="button" onClick={() => { setCommandMenu(null); imageInputRef.current?.click(); }}><Image size={15} /><span><strong>{t("添加图片")}</strong><small>JPG · PNG · GIF · WebP</small></span></button></div></>}
+          {commandMenu === "attachment" && <><button className="compose-menu-dismiss" aria-label={t("关闭")} onClick={() => setCommandMenu(null)} /><div className="compose-command-popover" style={commandMenuPosition}><button type="button" onClick={() => { setCommandMenu(null); void chooseAttachments(false); }}><Paperclip size={15} /><span><strong>{t("选择本地附件")}</strong><small>{t("最多 5 个，总计 3 MB")}</small></span></button><button type="button" onClick={() => { setCommandMenu(null); void chooseAttachments(true); }}><Image size={15} /><span><strong>{t("添加图片")}</strong><small>JPG · PNG · GIF · WebP</small></span></button></div></>}
         </div>
         <div className="compose-settings-menu">
           <button ref={largeAttachmentButtonRef} type="button" className="compose-command-button" aria-expanded={commandMenu === "large"} onClick={() => toggleCommandMenu("large", largeAttachmentButtonRef.current)}><FileUp size={16} /> {t("超大附件")} <ChevronDown size={13} /></button>
@@ -402,9 +476,9 @@ export function ComposePage({
           <button onClick={() => format("undo")} aria-label={t("撤销")}><Undo2 size={16} /></button>
           <button onClick={() => format("redo")} aria-label={t("重做")}><Redo2 size={16} /></button>
           <span />
-          <button onClick={() => imageInputRef.current?.click()}><Image size={16} /> {t("图片")}</button>
+          <button onClick={() => void chooseAttachments(true)}><Image size={16} /> {t("图片")}</button>
           <button onClick={insertLink}><Link2 size={16} /> {t("插入链接")}</button>
-          <button onClick={() => attachmentInputRef.current?.click()}><FileUp size={16} /> {t("导入文档")}</button>
+          <button onClick={() => void chooseAttachments(false)}><FileUp size={16} /> {t("导入文档")}</button>
           <button onClick={() => insertText(`${new Date().toLocaleDateString(language === "en" ? "en-US" : "zh-CN")} `)}><CalendarDays size={16} /> {t("日程")}</button>
           <div className="compose-emoji-menu">
             <button ref={emojiButtonRef} type="button" aria-expanded={emojiOpen} onClick={toggleEmojiMenu}><Smile size={16} /> {t("表情")}</button>
@@ -435,7 +509,7 @@ export function ComposePage({
           {formatMoreOpen && <><button type="button" className="compose-menu-dismiss" aria-label={t("关闭")} onClick={() => setFormatMoreOpen(false)} /><div className="compose-format-more-popover" style={formatMorePosition}><button onClick={() => { format("justifyLeft"); setFormatMoreOpen(false); }}><AlignLeft size={15} />{t("左对齐")}</button><button onClick={() => { format("justifyCenter"); setFormatMoreOpen(false); }}><AlignCenter size={15} />{t("居中")}</button><button onClick={() => { format("justifyRight"); setFormatMoreOpen(false); }}><AlignRight size={15} />{t("右对齐")}</button><button onClick={() => { format("insertUnorderedList"); setFormatMoreOpen(false); }}><List size={15} />{t("项目符号")}</button><button onClick={() => { format("insertOrderedList"); setFormatMoreOpen(false); }}><ListOrdered size={15} />{t("编号列表")}</button></div></>}
         </div>
 
-        {attachments.length > 0 && <div className="compose-attachments"><Paperclip size={15} />{attachments.map((attachment, index) => <span key={`${attachment.filename}-${index}`}><strong>{attachment.filename}</strong><small>{Math.max(1, Math.round(attachment.size / 1024))} KB</small><button onClick={() => setAttachments((current) => current.filter((_, itemIndex) => itemIndex !== index))} aria-label={t("移除附件")}><X size={13} /></button></span>)}</div>}
+        {attachments.length > 0 && <div className="compose-attachments"><Paperclip size={15} />{attachments.map((attachment, index) => <span key={attachment.uploadId || `${attachment.filename}-${index}`}><strong>{attachment.filename}</strong><small>{Math.max(1, Math.round(attachment.size / 1024))} KB</small><button onClick={() => removeAttachment(index)} aria-label={t("移除附件")}><X size={13} /></button></span>)}</div>}
 
         <div className="compose-editor-head"><strong>{t("邮件正文")}</strong><span>{text.length.toLocaleString()} / 2,000,000</span></div>
         <div ref={editorRef} className="compose-rich-editor" contentEditable suppressContentEditableWarning data-placeholder={t("输入邮件正文…")} dangerouslySetInnerHTML={{ __html: initialDraft.html || initialDraft.text.replace(/\n/g, "<br>") }} onInput={syncEditor} onMouseUp={captureEditorSelection} onKeyUp={captureEditorSelection} onBlur={captureEditorSelection} />

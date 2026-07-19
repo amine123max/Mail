@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -71,6 +72,7 @@ type graphFolderStatus struct {
 }
 
 type graphAttachment struct {
+	ID           string `json:"id"`
 	Name         string `json:"name"`
 	ContentType  string `json:"contentType"`
 	Size         int    `json:"size"`
@@ -423,14 +425,14 @@ func (s *Service) graphGetMessage(ctx context.Context, account *model.AccountCre
 	attachments := make([]Attachment, 0)
 	if message.HasAttachments || strings.Contains(strings.ToLower(message.Body.Content), "cid:") {
 		var collection graphCollection[graphAttachment]
-		if err := s.graphRequest(ctx, accessToken, http.MethodGet, "messages/"+url.PathEscape(id)+"/attachments?$select=name,contentType,size,isInline,contentId,contentBytes", nil, &collection); err == nil {
+		if err := s.graphRequest(ctx, accessToken, http.MethodGet, "messages/"+url.PathEscape(id)+"/attachments?$select=id,name,contentType,size,isInline,contentId,contentBytes", nil, &collection); err == nil {
 			for _, attachment := range collection.Value {
 				if attachment.IsInline && attachment.ContentID != "" && attachment.ContentBytes != "" && safeImageContentType(attachment.ContentType) && attachment.Size <= 2_000_000 {
 					inlineImages[normalizeContentID(attachment.ContentID)] = "data:" + attachment.ContentType + ";base64," + attachment.ContentBytes
 					continue
 				}
-				if !attachment.IsInline {
-					attachments = append(attachments, Attachment{Index: len(attachments), Filename: fallbackFilename(attachment.Name, len(attachments)), ContentType: fallbackContentType(attachment.ContentType), Size: attachment.Size})
+				if !attachment.IsInline && attachment.ID != "" {
+					attachments = append(attachments, Attachment{ID: graphAttachmentID(attachment.ID), Index: len(attachments), Filename: fallbackFilename(attachment.Name, len(attachments)), ContentType: fallbackContentType(attachment.ContentType), Size: attachment.Size})
 				}
 			}
 		}
@@ -450,6 +452,79 @@ func (s *Service) graphGetMessage(ctx context.Context, account *model.AccountCre
 	}
 	_ = s.store.MarkAccountSynced(ctx, account.OwnerKey, account.ID)
 	return MessageDetail{UID: "graph:" + message.ID, Subject: fallbackSubject(message.Subject), From: formatGraphAddress(from), To: formatGraphRecipients(message.ToRecipients), CC: formatGraphRecipients(message.CCRecipients), Date: isoDate(date), HTML: htmlBody, Text: textBody, Attachments: attachments}, nil
+}
+
+func (s *Service) graphGetAttachment(ctx context.Context, account *model.AccountCredentials, accessToken, uid, publicAttachmentID string) (AttachmentContent, error) {
+	messageID := strings.TrimPrefix(uid, "graph:")
+	attachmentID, ok := decodeGraphAttachmentID(publicAttachmentID)
+	if messageID == "" || !ok {
+		return AttachmentContent{}, serviceError("附件标识无效", "INVALID_ATTACHMENT_ID", http.StatusBadRequest)
+	}
+	resource := "messages/" + url.PathEscape(messageID) + "/attachments/" + url.PathEscape(attachmentID)
+	var metadata graphAttachment
+	if err := s.graphRequest(ctx, accessToken, http.MethodGet, resource+"?$select=id,name,contentType,size,isInline", nil, &metadata); err != nil {
+		return AttachmentContent{}, err
+	}
+	if metadata.ID == "" || metadata.ID != attachmentID || metadata.IsInline {
+		return AttachmentContent{}, serviceError("附件不存在或已被删除", "ATTACHMENT_NOT_FOUND", http.StatusNotFound)
+	}
+	if metadata.Size < 0 || int64(metadata.Size) > MaxAttachmentDownloadBytes {
+		return AttachmentContent{}, serviceError("附件超过桌面端下载上限", "ATTACHMENT_TOO_LARGE", http.StatusRequestEntityTooLarge)
+	}
+	endpoint, err := graphResourceURL(resource + "/$value")
+	if err != nil {
+		return AttachmentContent{}, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return AttachmentContent{}, err
+	}
+	request.Header.Set("Authorization", "Bearer "+accessToken)
+	request.Header.Set("Accept", "application/octet-stream")
+	downloadClient := *s.httpClient
+	if downloadClient.Timeout < 10*time.Minute {
+		downloadClient.Timeout = 10 * time.Minute
+	}
+	response, err := downloadClient.Do(request)
+	if err != nil {
+		return AttachmentContent{}, serviceError("Microsoft Graph 附件下载失败："+err.Error(), "GRAPH_TEMPORARY_NETWORK", http.StatusBadGateway)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		defer response.Body.Close()
+		payload, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+		var graphError struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		_ = json.Unmarshal(payload, &graphError)
+		detail := strings.TrimSpace(graphError.Error.Message)
+		if detail == "" {
+			detail = strings.TrimSpace(graphError.Error.Code)
+		}
+		if detail == "" {
+			detail = fmt.Sprintf("HTTP %d", response.StatusCode)
+		}
+		code, status := graphFailure(response.StatusCode, graphError.Error.Code)
+		return AttachmentContent{}, serviceErrorWithRetry("Microsoft Graph 附件下载失败："+detail, code, status, retryAfterSeconds(response.Header.Get("Retry-After")))
+	}
+	if response.ContentLength > MaxAttachmentDownloadBytes {
+		response.Body.Close()
+		return AttachmentContent{}, serviceError("附件超过桌面端下载上限", "ATTACHMENT_TOO_LARGE", http.StatusRequestEntityTooLarge)
+	}
+	size := int64(metadata.Size)
+	if response.ContentLength >= 0 {
+		size = response.ContentLength
+	}
+	_ = s.store.MarkAccountSynced(ctx, account.OwnerKey, account.ID)
+	return AttachmentContent{
+		ID:          publicAttachmentID,
+		Filename:    fallbackFilename(metadata.Name, 0),
+		ContentType: fallbackContentType(metadata.ContentType),
+		Size:        size,
+		Body:        response.Body,
+	}, nil
 }
 
 func (s *Service) graphSetRead(ctx context.Context, account *model.AccountCredentials, accessToken, uid string, read bool) error {
@@ -509,7 +584,11 @@ func (s *Service) graphSend(ctx context.Context, account *model.AccountCredentia
 	}
 	attachments := make([]map[string]any, 0, len(message.Attachments))
 	for _, attachment := range message.Attachments {
-		attachments = append(attachments, map[string]any{"@odata.type": "#microsoft.graph.fileAttachment", "name": safeFilename(attachment.Filename), "contentType": attachment.ContentType, "contentBytes": attachment.ContentBase64})
+		content, err := decodeAttachment(attachment)
+		if err != nil {
+			return SendResult{}, err
+		}
+		attachments = append(attachments, map[string]any{"@odata.type": "#microsoft.graph.fileAttachment", "name": safeFilename(attachment.Filename), "contentType": attachment.ContentType, "contentBytes": base64.StdEncoding.EncodeToString(content)})
 	}
 	contentType, content := "Text", message.Text
 	if strings.TrimSpace(message.HTML) != "" {
@@ -658,5 +737,8 @@ func fallbackSubject(value string) string {
 }
 
 func decodeAttachment(input AttachmentInput) ([]byte, error) {
+	if input.ContentPath != "" {
+		return os.ReadFile(input.ContentPath)
+	}
 	return base64.StdEncoding.DecodeString(input.ContentBase64)
 }

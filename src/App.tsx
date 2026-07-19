@@ -1564,7 +1564,7 @@ function MessageReader({
         <h2>{message.subject}</h2>
         <div className="reader-sender"><span className="sender-avatar large">{initials(message.from)}</span><div><strong>{message.from}</strong><span>{t("发送给 {to}", { to: message.to || "me" })}</span></div><time>{formatDate(message.date, true, language === "en" ? "en-US" : "zh-CN")}</time></div>
       </div>
-      {message.attachments.length > 0 && <div className="attachment-strip"><Paperclip size={15} /> {message.attachments.map((item) => <span key={item.index}>{item.filename}</span>)}</div>}
+      {message.attachments.length > 0 && <div className="attachment-strip"><Paperclip size={15} /> {message.attachments.map((item) => <span key={item.id || item.index}>{item.filename}</span>)}</div>}
       <iframe title={message.subject} className="message-frame" sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={srcDoc} />
     </>
   );
