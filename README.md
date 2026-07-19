@@ -282,6 +282,8 @@ Mail/
 
 Please read [SECURITY.md](SECURITY.md) before deploying publicly. Report security issues privately rather than opening a public issue containing credentials, tokens, logs, or mailbox content.
 
+The Windows client trust boundaries, mitigations, and remaining release risks are documented in [docs/desktop-threat-model.md](docs/desktop-threat-model.md).
+
 ## License
 
 Released under the [MIT License](LICENSE).

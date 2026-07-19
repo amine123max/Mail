@@ -1000,3 +1000,16 @@ button { color: inherit; }
   .login-card.success-transition { animation: login-card-exit .3s ease forwards; }
   .login-page.auth-transitioning::after { display: none; }
 }
+
+.application-error-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; color: var(--foreground); background: var(--background); }
+.application-error-card { width: min(420px, 100%); display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 14px; align-items: start; padding: 22px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 18px 50px rgba(15, 23, 42, .12); }
+.application-error-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.application-error-copy { min-width: 0; display: grid; gap: 6px; }
+.application-error-copy strong { font-size: 15px; line-height: 1.35; }
+.application-error-copy p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.65; }
+.application-error-card > .button { grid-column: 2; justify-self: start; min-width: 132px; }
+
+@media (max-width: 520px) {
+  .application-error-card { grid-template-columns: 1fr; }
+  .application-error-card > .button { grid-column: 1; width: 100%; }
+}

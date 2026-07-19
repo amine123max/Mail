@@ -1,6 +1,6 @@
 {
   "name": "mail",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Go-powered Outlook, Hotmail and Microsoft Graph mailbox manager with SQLite",
   "scripts": {
@@ -11,7 +11,8 @@
     "build:server": "node -e \"require('node:fs').mkdirSync('build',{recursive:true})\" && go build -trimpath -o build/mail-server ./server/cmd/mail && go build -trimpath -o build/bootstrap-admin ./server/cmd/bootstrap-admin",
     "start": "go run ./server/cmd/mail",
     "bootstrap-admin": "go run ./server/cmd/bootstrap-admin",
-    "test": "npm run test:go",
+    "test": "npm run test:frontend && npm run test:go",
+    "test:frontend": "vitest run --dir src --environment jsdom",
     "test:go": "go test ./server/...",
     "vet": "go vet ./server/...",
     "audit": "npm audit --omit=dev --registry=https://registry.npmjs.org",
@@ -27,12 +28,16 @@
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
     "@types/node": "^24.0.3",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.5.2",
     "concurrently": "^9.1.2",
+    "jsdom": "^26.1.0",
     "typescript": "^5.8.3",
-    "vite": "^6.3.5"
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
   }
 }

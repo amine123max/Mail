@@ -41,6 +41,7 @@ jobs:
         run: |
           npm run contract:check
           npm run check:desktop-source
+          npm run test:frontend
           npm run typecheck
           VITE_BASE_PATH=/mail/ npm run build:web
 

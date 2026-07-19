@@ -277,6 +277,8 @@ Mail/
 
 公开部署前请阅读 [SECURITY.md](SECURITY.md)。发现安全问题时请私下报告，不要在公开 Issue 中提交凭据、Token、日志或邮件内容。
 
+Windows 客户端的信任边界、防护措施与剩余发布风险见 [docs/desktop-threat-model.md](docs/desktop-threat-model.md)。
+
 ## 开源协议
 
 项目使用 [MIT License](LICENSE) 发布。

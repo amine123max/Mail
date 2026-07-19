@@ -3,6 +3,9 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 export type Language = "zh" | "en";
 
 const english: Record<string, string> = {
+  "应用需要重新加载": "Application needs to reload",
+  "界面发生异常，邮件数据未被删除。重新加载即可恢复。": "The interface stopped unexpectedly. Your mail data was not deleted; reload to recover.",
+  "重新加载应用": "Reload application",
   "下载客户端": "Download",
   "Mail 桌面客户端": "Mail for Windows",
   "Windows 安装版": "Windows installer",

@@ -88,6 +88,36 @@ func TestMIMEInlineImagesAndSanitization(t *testing.T) {
 	}
 }
 
+func TestSanitizeMessageHTMLBlocksActiveContent(t *testing.T) {
+	source := `<script>alert("script")</script>
+		<img src="x" onerror="alert('event')">
+		<iframe src="https://tracker.example/frame"></iframe>
+		<form action="https://tracker.example/post"><input name="secret"></form>
+		<svg onload="alert('svg')"><a href="javascript:alert('link')">unsafe</a></svg>
+		<div style="background-image:url(https://tracker.example/style.png)">styled</div>
+		<img src="https://tracker.example/pixel.png" width="1" height="1">
+		<a href="https://example.com/safe">safe link</a>`
+
+	sanitized := sanitizeMessageHTML(source, nil)
+	lower := strings.ToLower(sanitized)
+	for _, forbidden := range []string{
+		"<script",
+		"onerror",
+		"<iframe",
+		"<form",
+		"<svg",
+		"javascript:",
+		"tracker.example",
+	} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("sanitizer preserved %q: %s", forbidden, sanitized)
+		}
+	}
+	if !strings.Contains(sanitized, "https://example.com/safe") {
+		t.Fatalf("sanitizer removed a safe HTTPS link: %s", sanitized)
+	}
+}
+
 func TestRemoteImageURLRejectsPrivateNetworks(t *testing.T) {
 	for _, source := range []string{
 		"http://127.0.0.1/a.png",
