@@ -286,5 +286,4 @@ Please read [SECURITY.md](SECURITY.md) before deploying publicly. Report securit
 The Windows client trust boundaries, mitigations, and remaining release risks are documented in [docs/desktop-threat-model.md](docs/desktop-threat-model.md).
 
 ## License
-Thanks to Linux.do https://linux.do
-Released under the [MIT License](LICENSE).
+Thanks to the [LINUX DO](https://linux.do/) open-source community for providing a platform for discussion and knowledge sharing.
