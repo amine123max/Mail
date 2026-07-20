@@ -281,5 +281,4 @@ Mail/
 Windows 客户端的信任边界、防护措施与剩余发布风险见 [docs/desktop-threat-model.md](docs/desktop-threat-model.md)。
 
 ## 开源协议
-感谢Linux.do社区 https://linux.do
-项目使用 [MIT License](LICENSE) 发布。
+感谢 [LINUX DO](https://linux.do/) 开源社区提供交流与分享平台。
